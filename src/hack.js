@@ -4,6 +4,7 @@
  * @param {NS} ns - The Netscript environment.
  * @param {string} target - The target server to hack.
  * @param {boolean} useStock - Whether to use stock market mechanics.
+ * @param {number} [delay=0] - Optional delay in milliseconds before starting the hack operation.
  * 
  * Usage: run hack.js <target> [useStock]
  * 
@@ -13,6 +14,7 @@
  */
 export async function main(ns) {
   const target = ns.args[0];
-  const useStock = ns.args[1];
-  await ns.hack(target, { stock: useStock });
+  const delay = Number(ns.args[1] ?? 0);
+  if (delay > 0) await ns.sleep(delay);
+  await ns.weaken(target);
 }
