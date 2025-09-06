@@ -27,19 +27,17 @@ function getAllServerNames(ns) {
   }
 
   ns.print(`Scan complete. Found ${visited.length} servers.`);
-  return visited;
+  return visited.reverse();
 }
 
 export async function main(ns) {
   const servers = getAllServerNames(ns);
   for (const server of servers) {
-    if (server !== "home") {
-      ns.print(`killing scripts on ${server}`);
-      try {
-        ns.killall(server);
-      } catch (err) {
-        ns.print(`${red}ERROR invalid server name: ${server}${reset}`);
-      }
+    ns.print(`killing scripts on ${server}`);
+    try {
+      ns.killall(server);
+    } catch (err) {
+      ns.print(`${red}ERROR invalid server name: ${server}${reset}`);
     }
   }
 }
