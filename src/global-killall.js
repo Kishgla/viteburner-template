@@ -1,13 +1,20 @@
-const red = "\x1B[31m";
-const reset = "\x1B[0m";
+/** @param {NS} ns */
+
+//ANSI colors
+const red = "\u001b[31m";
+const reset = "\u001b[0m";
+
 function getAllServerNames(ns) {
   var queue = ["home"];
   var visited = [];
+
   while (queue.length > 0) {
     var server = queue.pop();
+
     if (!visited.includes(server)) {
       visited.push(server);
       ns.print(`Discovered server: ${server}`);
+
       try {
         const neighbors = ns.scan(server);
         for (const neighbor of neighbors) {
@@ -18,9 +25,11 @@ function getAllServerNames(ns) {
       }
     }
   }
+
   ns.print(`Scan complete. Found ${visited.length} servers.`);
   return visited;
 }
+
 export async function main(ns) {
   const servers = getAllServerNames(ns);
   for (const server of servers) {
