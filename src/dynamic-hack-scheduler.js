@@ -50,9 +50,7 @@ function times(ns, target) {
 }
 
 const SCRIPT_LIST = [WEAKEN, GROW, HACK];
-const _scpCache = new Set();
 function ensureScripts(ns, host) {
-  if (_scpCache.has(host)) return true;
   const missing = SCRIPT_LIST.filter(s => !ns.fileExists(s, host));
   if (missing.length) {
     const ok = ns.scp(missing, host, "home");
@@ -61,7 +59,6 @@ function ensureScripts(ns, host) {
       return false;
     } 
   }
-  _scpCache.add(host);
   return true;
 }
 
