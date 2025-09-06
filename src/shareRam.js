@@ -1,5 +1,5 @@
 /** @param {NS} ns */
-import { getAllServerNames } from './helpers.js';
+import { getAllServerNames } from "helpers.js";
 
 /**
  * Continuously shares RAM on all servers with factions to increase reputation gain.
