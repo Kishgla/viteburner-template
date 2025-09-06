@@ -139,7 +139,7 @@ function tryGainRootAccess(ns, target) {
 
     try {
       ns.nuke(target.name);
-      ns.print(`🌐 Gained root on ${target.name}`);
+      ns.toast(`🌐 Gained root on ${target.name}`);
     } catch (e) {
       ns.tprint(`${YELLOW}⚠️ Failed to nuke ${target.name}${RESET}`);
       ns.tprint(`${RED}   Error: ${e}${RESET}`);
@@ -233,21 +233,21 @@ export async function main(ns) {
   while (true) {
     // Discover everything and root if possible
     const serverNames = getAllServerNames(ns);
-    const allServers = getServerObjects(ns, serverNames, SECURITY_BUFFER, FUNDING_THRESHOLD);
+    const serverObjects = getServerObjects(ns, serverNames, SECURITY_BUFFER, FUNDING_THRESHOLD);
     const hackingLevel = ns.getHackingLevel();
 
-    for (const t of allServers) {
+    for (const t of serverObjects) {
       tryGainRootAccess(ns, t);
     }
 
     // Workers = all rooted servers with RAM
-    const workers = allServers.filter(s => s.data.hasAdminRights && s.data.maxRam > 0);
+    const workers = serverObjects.filter(s => s.data.hasAdminRights && s.data.maxRam > 0);
     for (const w of workers) {
       ensureScripts(ns, w.name);
     }
 
     // Targets we can hack
-    const viableTargets = allServers.filter(s =>
+    const viableTargets = serverObjects.filter(s =>
       s.data.hasAdminRights &&
       s.data.moneyMax > 0 &&
       s.data.requiredHackingSkill <= hackingLevel
