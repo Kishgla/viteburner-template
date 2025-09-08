@@ -36,16 +36,19 @@ export async function main(ns) {
 
   ns.disableLog("sleep");
 
-  if (!ns.gang.inGang()) {
-    ns.tprint("❌ You are not currently in a gang. Join/Found a gang first.");
-    return;
-  }
+  // Wait here until a gang is formed
+  await waitForGang(ns);
 
   while (true) {
+    // If gang gets disbanded while running, go back to waiting mode
+    if (!ns.gang.inGang()) {
+      ns.tprint("⚠️ Gang disbanded (or not formed yet). Pausing management until a gang exists.");
+      await waitForGang(ns);
+    }
+
     try {
       const info = ns.gang.getGangInformation();
       const isHacking = info.isHacking;
-      const members = ns.gang.getMemberNames();
 
       recruitLoop(ns);
 
@@ -81,6 +84,20 @@ export async function main(ns) {
     await ns.sleep(flags.interval);
   }
 }
+
+/** Waits in 10s intervals until a gang exists, printing a message once. */
+async function waitForGang(ns) {
+  let announced = false;
+  while (!ns.gang.inGang()) {
+    if (!announced) {
+      ns.tprint("⏳ Not in a gang yet. Waiting every 10s...");
+      announced = true;
+    }
+    await ns.sleep(10_000);
+  }
+  ns.tprint("✅ Gang detected. Starting management loop.");
+}
+
 
 /** ────────────────────────────────────────────────────────────────────────────
  * Recruiting
