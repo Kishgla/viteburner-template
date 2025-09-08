@@ -149,7 +149,7 @@ function buyEquipment(ns, members, reserveFrac) {
       if (cash * (1 - reserveFrac) < cost) break;
       try {
         if (ns.gang.purchaseEquipment(m, name)) {
-          ns.print(`🛒 Bought ${name} for ${m} (${ns.nFormat(cost, "$0.00a")})`);
+          ns.print(`🛒 Bought ${name} for ${m} (${ns.formatNumber(cost, "$0.00a")})`);
         }
       } catch { /* ignore */ }
     }
