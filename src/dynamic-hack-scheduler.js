@@ -136,7 +136,7 @@ function tryGainRootAccess(ns, target) {
 
     try {
       ns.nuke(target.name);
-      ns.toast(`🌐 Gained root on ${target.name}`);
+      ns.tprint(`🌐 Gained root on ${target.name}`);
     } catch (e) {
       ns.tprint(`${YELLOW}⚠️ Failed to nuke ${target.name}${RESET}`);
       ns.tprint(`${RED}   Error: ${e}${RESET}`);
