@@ -28,16 +28,13 @@ export async function main(ns) {
     ["reserve", 0.10],
     ["ascendGain", 1.5],
     ["trainCap", 400],
-    ["wantedCap", 0.95],
+    ["wantedCap", 0.8],
     ["warMin", 1.25],
     ["warShare", 0.35],
     ["noWar", false],
   ]);
 
   ns.disableLog("sleep");
-
-  // Wait here until a gang is formed
-  await waitForGang(ns);
 
   while (true) {
     // If gang gets disbanded while running, go back to waiting mode
