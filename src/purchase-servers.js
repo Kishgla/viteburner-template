@@ -47,6 +47,7 @@ function getSmallestOwnedServer(ns) {
  * - If the maximum number of servers is reached, it will replace the smallest server if the new one is larger.
  */
 export async function main(ns) {
+  ns.disableLog("getServerMaxRam");
   const maxServers = ns.getPurchasedServerLimit();
   while (true) {
     const budget = ns.getPlayer().money * BUDGET_RATIO;
