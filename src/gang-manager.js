@@ -44,7 +44,7 @@ function needsCombatTraining(member) {
 }
 
 function getBestMoneyRespectTask(ns, member) {
-    // Get all available tasks and their success chances
+    // Get all available tasks and calculate best option
     const availableTasks = [
         TASKS.CYBERTERRORISM,
         TASKS.MONEY_LAUNDERING,
@@ -60,10 +60,10 @@ function getBestMoneyRespectTask(ns, member) {
     for (const task of availableTasks) {
         try {
             const taskStats = ns.gang.getTaskStats(task);
-            const successChance = ns.gang.getChanceToWinClash(member.name); // Approximation
             
-            // Score based on money gain, respect gain, and success chance
-            const score = (taskStats.baseMoney + taskStats.baseRespect * 0.1) * successChance;
+            // Simple scoring: prioritize tasks with higher base rewards
+            // Weight respect slightly lower than money
+            const score = taskStats.baseMoney + (taskStats.baseRespect * 0.1);
             
             if (score > bestScore) {
                 bestScore = score;
@@ -86,7 +86,7 @@ export async function main(ns) {
             const members = ns.gang.getMemberNames();
             const memberStats = members.map(name => getMemberStats(ns, name));
             const gangInfo = ns.gang.getGangInformation();
-            const wantedPenalty = gangInfo.wantedPenaltyMult;
+            const wantedPenalty = gangInfo.wantedPenalty || 1;
             
             ns.print(`=== Gang Management Cycle ===`);
             ns.print(`Wanted Penalty: ${wantedPenalty.toFixed(3)}x`);
