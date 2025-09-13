@@ -92,8 +92,7 @@ export async function main(ns) {
             ns.print(`Wanted Penalty: ${wantedPenalty.toFixed(3)}x`);
             ns.print(`Members: ${members.length}`);
             
-            // Sort members by different criteria
-            const membersByHacking = [...memberStats].sort((a, b) => a.hacking - b.hacking);
+            // Sort members by combat level (for vigilante assignment)
             const membersByCombat = [...memberStats].sort((a, b) => b.combat - a.combat);
             
             // Track assigned roles
