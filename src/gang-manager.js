@@ -78,6 +78,28 @@ function getBestMoneyRespectTask(ns, member) {
     return bestTask;
 }
 
+function shouldAscendMember(ns, memberName) {
+    try {
+        const ascensionResult = ns.gang.getAscensionResult(memberName);
+        if (!ascensionResult) return false; // Can't ascend yet
+        
+        // Check if any multiplier would improve by the threshold
+        const improvements = [
+            ascensionResult.hack || 1,
+            ascensionResult.str || 1,
+            ascensionResult.def || 1,
+            ascensionResult.dex || 1,
+            ascensionResult.agi || 1,
+            ascensionResult.cha || 1
+        ];
+        
+        const maxImprovement = Math.max(...improvements);
+        return maxImprovement >= ASCENSION_THRESHOLD;
+    } catch (e) {
+        return false; // Error checking ascension, skip
+    }
+}
+
 export async function main(ns) {
     ns.disableLog("sleep");
     
