@@ -185,7 +185,7 @@ export async function main(ns) {
                     );
                     
                     ns.gang.ascendMember(member.name);
-                    ns.print(`🔼 ASCENDED ${member.name} - Max multiplier gain: ${maxGain.toFixed(2)}x`);
+                    ns.tprint(`🔼 ASCENDED ${member.name} - Max multiplier gain: ${maxGain.toFixed(2)}x`);
                 }
             }
             
