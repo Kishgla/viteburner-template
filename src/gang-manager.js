@@ -150,12 +150,8 @@ export async function main(ns) {
             ns.print(`Vigilante: ${vigilanteAssigned ? 'Assigned' : 'Not needed'}`);
             
             // Check for ascensions after task assignments
-            const currentTime = Date.now();
             for (const member of memberStats) {
-                const lastAscension = lastAscensionTimes.get(member.name) || 0;
-                const timeSinceLastAscension = currentTime - lastAscension;
-                
-                if (timeSinceLastAscension >= MIN_ASCENSION_INTERVAL && shouldAscendMember(ns, member.name)) {
+                if (shouldAscendMember(ns, member.name)) {
                     const ascensionResult = ns.gang.getAscensionResult(member.name);
                     const maxGain = Math.max(
                         ascensionResult.hack || 1,
@@ -167,7 +163,6 @@ export async function main(ns) {
                     );
                     
                     ns.gang.ascendMember(member.name);
-                    lastAscensionTimes.set(member.name, currentTime);
                     ns.print(`🔼 ASCENDED ${member.name} - Max multiplier gain: ${maxGain.toFixed(2)}x`);
                 }
             }
