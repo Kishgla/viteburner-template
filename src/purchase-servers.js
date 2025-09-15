@@ -1,6 +1,5 @@
 /** @param {NS} ns */
 const MAX_RAM = 2 ** 20; // Bitburner's max server RAM
-const RAM_MULT = 2; // stepwise upgrade multiplier (like 8 → 16 → 32)
 const BUDGET_RATIO = 0.2; // max 20% of player money spent
 
 //ANSI colors ⚠️
