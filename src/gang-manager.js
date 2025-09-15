@@ -308,7 +308,7 @@ export async function main(ns) {
             // Manage equipment purchases
             const equipmentPurchases = manageEquipment(ns);
             if (equipmentPurchases > 0) {
-                ns.print(`🛡️ Made ${equipmentPurchases} equipment purchases`);
+                ns.tprint(`🛡️ Made ${equipmentPurchases} equipment purchases`);
             }
             
         } catch (error) {
