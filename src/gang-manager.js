@@ -6,6 +6,16 @@ const TRAINING_THRESHOLDS = {
     combat: 100    // Train combat if below this level (average of str/def/dex/agi)
 };
 
+// Ascension settings
+const ASCENSION_THRESHOLD = 1.5; // Ascend if any multiplier would improve by this factor
+
+// Equipment settings
+const EQUIPMENT_CONFIG = {
+    BUDGET_RATIO: 0.15,           // Spend up to 15% of money on equipment
+    MIN_CASH_RESERVE: 100000000,  // Keep at least 100M cash
+    PRIORITIZE_CHEAPEST: true,    // Buy cheapest equipment first, or most expensive
+};
+
 // Task priorities (higher number = higher priority for money/respect)
 const TASKS = {
     // Training tasks
@@ -76,6 +86,112 @@ function getBestMoneyRespectTask(ns, member) {
     }
     
     return bestTask;
+}
+
+function getEquipmentUpgrades(ns) {
+    const equipmentNames = ns.gang.getEquipmentNames();
+    const equipment = [];
+    
+    for (const name of equipmentNames) {
+        const stats = ns.gang.getEquipmentStats(name);
+        const cost = ns.gang.getEquipmentCost(name);
+        
+        equipment.push({
+            name,
+            cost,
+            type: ns.gang.getEquipmentType(name),
+            stats,
+            // Calculate total stat benefit for prioritization
+            totalBenefit: (stats.str || 0) + (stats.def || 0) + (stats.dex || 0) + 
+                         (stats.agi || 0) + (stats.hack || 0) + (stats.cha || 0)
+        });
+    }
+    
+    return equipment;
+}
+
+function getMemberEquipment(ns, memberName) {
+    try {
+        const memberInfo = ns.gang.getMemberInformation(memberName);
+        return memberInfo.upgrades || [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function findBestEquipmentForMember(ns, memberName, availableBudget) {
+    const memberEquipment = getMemberEquipment(ns, memberName);
+    const allEquipment = getEquipmentUpgrades(ns);
+    
+    // Filter out equipment member already has
+    const availableEquipment = allEquipment.filter(eq => !memberEquipment.includes(eq.name));
+    
+    if (availableEquipment.length === 0) return null;
+    
+    // Filter by budget
+    const affordableEquipment = availableEquipment.filter(eq => eq.cost <= availableBudget);
+    
+    if (affordableEquipment.length === 0) return null;
+    
+    // Sort by preference (cheapest first or most expensive first)
+    if (EQUIPMENT_CONFIG.PRIORITIZE_CHEAPEST) {
+        affordableEquipment.sort((a, b) => a.cost - b.cost);
+    } else {
+        affordableEquipment.sort((a, b) => b.cost - a.cost);
+    }
+    
+    return affordableEquipment[0];
+}
+
+function manageEquipment(ns) {
+    const playerMoney = ns.getPlayer().money;
+    const equipmentBudget = Math.max(0, 
+        Math.min(
+            playerMoney * EQUIPMENT_CONFIG.BUDGET_RATIO,
+            playerMoney - EQUIPMENT_CONFIG.MIN_CASH_RESERVE
+        )
+    );
+    
+    if (equipmentBudget <= 0) return;
+    
+    const members = ns.gang.getMemberNames();
+    let remainingBudget = equipmentBudget;
+    let purchasesMade = [];
+    
+    // Round-robin equipment purchases across members
+    let purchasesThisRound = 0;
+    do {
+        purchasesThisRound = 0;
+        
+        for (const memberName of members) {
+            if (remainingBudget <= 0) break;
+            
+            const bestEquipment = findBestEquipmentForMember(ns, memberName, remainingBudget);
+            if (bestEquipment) {
+                const success = ns.gang.purchaseEquipment(memberName, bestEquipment.name);
+                if (success) {
+                    remainingBudget -= bestEquipment.cost;
+                    purchasesMade.push({
+                        member: memberName,
+                        equipment: bestEquipment.name,
+                        cost: bestEquipment.cost
+                    });
+                    purchasesThisRound++;
+                }
+            }
+        }
+    } while (purchasesThisRound > 0 && remainingBudget > 0);
+    
+    // Log purchases
+    if (purchasesMade.length > 0) {
+        ns.print(`--- Equipment Purchases ---`);
+        for (const purchase of purchasesMade) {
+            ns.print(`${purchase.member}: ${purchase.equipment} (${ns.formatNumber(purchase.cost)})`);
+        }
+        ns.print(`Total spent: ${ns.formatNumber(equipmentBudget - remainingBudget)}`);
+    }
+    
+    return purchasesMade.length;
 }
 
 function shouldAscendMember(ns, memberName) {
@@ -187,6 +303,12 @@ export async function main(ns) {
                     ns.gang.ascendMember(member.name);
                     ns.tprint(`🔼 ASCENDED ${member.name} - Max multiplier gain: ${maxGain.toFixed(2)}x`);
                 }
+            }
+            
+            // Manage equipment purchases
+            const equipmentPurchases = manageEquipment(ns);
+            if (equipmentPurchases > 0) {
+                ns.print(`🛡️ Made ${equipmentPurchases} equipment purchases`);
             }
             
         } catch (error) {
