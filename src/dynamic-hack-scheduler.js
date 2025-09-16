@@ -9,6 +9,44 @@ import {
 } from "./helpers.js";
 
 /*******************************************************************************\
+|* Stock Influence Integration                                                 *|
+\*******************************************************************************/
+
+function getStockInfluence(ns, targetName) {
+  try {
+    // Map server names to stock symbols (you'll need to customize this mapping)
+    const serverToStock = {
+      "foodnstuff": "FNS",
+      "sigma-cosmetics": "SGC",
+      "joesguns": "JGN",
+      "nectar-net": "NWTR",
+      "hong-fang-tea": "HFT",
+      "harakiri-sushi": "HRKS",
+      // Add more mappings as needed
+    };
+
+    const stockSymbol = serverToStock[targetName];
+    if (!stockSymbol) return null;
+
+    const influenceFile = `/stock-influence/${stockSymbol}.txt`;
+    if (!ns.fileExists(influenceFile)) return null;
+
+    const content = ns.read(influenceFile);
+    if (!content) return null;
+
+    const instructions = JSON.parse(content);
+    const age = Date.now() - instructions.timestamp;
+
+    // Instructions expire after 5 minutes
+    if (age > 300000) return null;
+
+    return instructions.direction; // 'up' or 'down'
+  } catch (e) {
+    return null;
+  }
+}
+
+/*******************************************************************************\
 |* Config                                                                      *|
 \*******************************************************************************/
 
@@ -57,7 +95,7 @@ function ensureScripts(ns, host) {
     if (!ok) {
       ns.tprint(`${RED}⚠️ Failed to copy ${missing.join(", ")} to ${host}${RESET}`);
       return false;
-    } 
+    }
   }
   return true;
 }
@@ -71,11 +109,15 @@ function freeRam(ns, host) {
 /** Spread threads across workers, scheduling a job to END at latestEnd.
  * args is an array of base args (we append the delay at the end).
  */
-function dispatchToEnd(ns, file, args, workers, totalThreads, actionTime, latestEnd) {
+function dispatchToEnd(ns, file, args, workers, totalThreads, actionTime, latestEnd, targetName) {
   if (totalThreads <= 0) return 0;
   workers = sortWorkers(workers);
   const ramPerThread = ns.getScriptRam(file, "home");
   let remaining = totalThreads;
+
+  // Get stock influence direction
+  const influence = getStockInfluence(ns, targetName);
+
   for (const w of workers) {
     if (!ensureScripts(ns, w.name)) continue;
     const availThreads = Math.floor(freeRam(ns, w.name) / ramPerThread);
@@ -83,14 +125,37 @@ function dispatchToEnd(ns, file, args, workers, totalThreads, actionTime, latest
     const useThreads = Math.min(availThreads, remaining);
     const delay = Math.max(0, Math.floor(latestEnd - actionTime - Date.now()));
 
-    // Launch with appended delay arg
-    const pid = ns.exec(file, w.name, useThreads, ...args, delay);
+    // Modify args based on stock influence
+    let modifiedArgs = [...args];
+
+    if (file === HACK || file === GROW) {
+      // Determine stock influence flag based on desired direction and action
+      let stockFlag = false; // Default: no influence on stock
+
+      if (influence === "up") {
+        // Want stock to go up
+        stockFlag = (file === GROW); // Grow increases stock, hack decreases it
+      } else if (influence === "down") {
+        // Want stock to go down  
+        stockFlag = (file === HACK); // Hack decreases stock, grow increases it
+      }
+
+      // Replace the stock influence flag in args (assumes it's the 2nd argument)
+      if (modifiedArgs.length > 1) {
+        modifiedArgs[1] = stockFlag;
+      } else {
+        modifiedArgs.push(stockFlag);
+      }
+    }
+
+    // Launch with modified args and delay
+    const pid = ns.exec(file, w.name, useThreads, ...modifiedArgs, delay);
     if (pid !== 0) {
       remaining -= useThreads;
       if (remaining <= 0) break;
     }
   }
-  return totalThreads - remaining; // launched threads
+  return totalThreads - remaining;
 }
 
 /** Calculate batch threads for a self-contained HWGW batch.
@@ -191,9 +256,9 @@ function scheduleBatch(ns, targetName, workers, stealFrac, latestEnd) {
   // Landing order: W2 -> G -> W1 -> H
   let ok = false;
   ok = dispatchToEnd(ns, WEAKEN, [targetName], workers, w2, w, latestEnd) > 0 || ok;
-  ok = dispatchToEnd(ns, GROW,   [targetName, false], workers, growT, g, latestEnd - STEP_PAD) > 0 || ok;
+  ok = dispatchToEnd(ns, GROW, [targetName, false], workers, growT, g, latestEnd - STEP_PAD, targetName) > 0 || ok;
   ok = dispatchToEnd(ns, WEAKEN, [targetName], workers, w1, w, latestEnd - 2 * STEP_PAD) > 0 || ok;
-  ok = dispatchToEnd(ns, HACK,   [targetName, false], workers, hackT, h, latestEnd - 3 * STEP_PAD) > 0 || ok;
+  ok = dispatchToEnd(ns, HACK, [targetName, false], workers, hackT, h, latestEnd - 3 * STEP_PAD, targetName) > 0 || ok;
 
   return ok;
 }
@@ -203,7 +268,6 @@ function scheduleBatch(ns, targetName, workers, stealFrac, latestEnd) {
  * which allows safe overlap with only a CHAIN_SPACER between batch landings.
  */
 function fillPipeline(ns, targetName, workers, stealFrac) {
-  const landBase = Date.now();
   // Try to schedule up to PIPELINE batches, spaced by CHAIN_SPACER
   let scheduled = 0;
   const { w } = times(ns, targetName);

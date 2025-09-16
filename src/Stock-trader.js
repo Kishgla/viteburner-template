@@ -108,7 +108,16 @@ function shouldSellStock(info) {
 
 function shouldShortStock(ns, info) {
     if (!ns.stock.has4SDataTIXAPI()) return false; // Need 4S data for shorts
-    return info.forecast < STOCK_CONFIG.SHORT_THRESHOLD && info.shortShares === 0;
+    if (!ns.stock.hasWSEAccount()) return false; // Need WSE account
+    
+    // Check if we can actually short (this will return false if shorting isn't unlocked)
+    try {
+        // Test if we can get short position info (this fails if shorting not available)
+        ns.stock.getPosition(info.symbol);
+        return info.forecast < STOCK_CONFIG.SHORT_THRESHOLD && info.shortShares === 0;
+    } catch (e) {
+        return false;
+    }
 }
 
 function shouldCoverShorts(info) {
@@ -249,25 +258,32 @@ export async function main(ns) {
                     }
                 }
                 
-                // Short positions (if 4S data available)
-                if (ns.stock.has4SDataTIXAPI()) {
-                    if (shouldShortStock(ns, info) && cash > reserveCash) {
-                        const shares = calculatePositionSize(ns, symbol, STOCK_CONFIG.MAX_POSITION_PCT);
-                        const cost = shares * info.bidPrice + 100000;
-                        
-                        if (cash >= cost + reserveCash && shares > 0) {
+                // Short positions (if available and unlocked)
+                if (shouldShortStock(ns, info) && cash > reserveCash) {
+                    const shares = calculatePositionSize(ns, symbol, STOCK_CONFIG.MAX_POSITION_PCT);
+                    const cost = shares * info.bidPrice + 100000;
+                    
+                    if (cash >= cost + reserveCash && shares > 0) {
+                        try {
                             const actualCost = ns.stock.buyShort(symbol, shares);
                             if (actualCost > 0) {
-                                action = `SHORT ${shares} @ $${info.bidPrice.toFixed(2)}`;
+                                action = `SHORT ${shares} @ ${info.bidPrice.toFixed(2)}`;
                                 influenceDirection = "down";
                             }
+                        } catch (e) {
+                            // Shorting failed - probably not unlocked yet
+                            ns.print(`${YELLOW}⚠️ Cannot short ${symbol} - feature may not be unlocked${RESET}`);
                         }
-                    } else if (shouldCoverShorts(info)) {
+                    }
+                } else if (shouldCoverShorts(info)) {
+                    try {
                         const proceeds = ns.stock.sellShort(symbol, info.shortShares);
                         if (proceeds > 0) {
                             const pnlPct = ((info.avgShortPrice - proceeds / info.shortShares) / info.avgShortPrice * 100);
-                            action = `COVER ${info.shortShares} @ $${info.price.toFixed(2)} (${pnlPct > 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`;
+                            action = `COVER ${info.shortShares} @ ${info.price.toFixed(2)} (${pnlPct > 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`;
                         }
+                    } catch (e) {
+                        ns.print(`${RED}⚠️ Failed to cover shorts for ${symbol}: ${e.message}${RESET}`);
                     }
                 }
                 
