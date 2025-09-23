@@ -83,7 +83,7 @@ function getBestHacknetUpgrade(ns) {
 }
 
 export async function main(ns) {
-  const budgetMult = 0.2;
+  const budgetMult = 0.1;
   let budget = ns.getPlayer().money * budgetMult;
   while (true) {
     const upgrade = getBestHacknetUpgrade(ns);
