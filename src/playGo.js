@@ -8,24 +8,24 @@ const IPVGO_CONFIG = {
     // Strategy settings
     PASS_THRESHOLD: 0.15,          // Pass if win rate drops below 15%
     RESIGN_THRESHOLD: 0.05,        // Resign if win rate drops below 5%
-    
+
     // Timing
     MOVE_DELAY: 1000,              // Wait 1 second between moves
     GAME_DELAY: 2000,              // Wait 2 seconds between games
-    
+
     // Targeting
     PREFERRED_OPPONENTS: [         // Ordered by preference (easiest first)
         "Netburners",
-        "Slum Snakes", 
+        "Slum Snakes",
         "The Black Hand",
         "Tetrads",
         "Daedalus",
         "Illuminati"
     ],
-    
+
     // Subnet preferences
     TARGET_SIZE: "medium",         // "small", "medium", "large", or "random"
-    
+
     // Logging
     DETAILED_LOGGING: false,       // Show move-by-move analysis (default, can override with args)
     STATS_INTERVAL: 10,            // Show stats every N games
@@ -51,7 +51,7 @@ class IPvGOPlayer {
         this.losses = 0;
         this.stats = new Map(); // Track performance vs each opponent
     }
-    
+
     getGameState() {
         try {
             return this.ns.go.getGameState();
@@ -59,7 +59,7 @@ class IPvGOPlayer {
             return null;
         }
     }
-    
+
     getBoardState() {
         try {
             return this.ns.go.getBoardState();
@@ -67,7 +67,7 @@ class IPvGOPlayer {
             return null;
         }
     }
-    
+
     getValidMoves() {
         try {
             return this.ns.go.getValidMoves();
@@ -75,17 +75,17 @@ class IPvGOPlayer {
             return [];
         }
     }
-    
+
     analyzePosition() {
         const gameState = this.getGameState();
         if (!gameState) return null;
-        
+
         try {
             // Get current analysis from the game
             const analysis = this.ns.go.analysis.getLibertyCounts();
             const chains = this.ns.go.analysis.getChains();
             const controlledEmptyNodes = this.ns.go.analysis.getControlledEmptyNodes();
-            
+
             return {
                 gameState,
                 analysis,
@@ -101,24 +101,24 @@ class IPvGOPlayer {
             };
         }
     }
-    
+
     findBestMove() {
         const position = this.analyzePosition();
         if (!position || !position.validMoves || position.validMoves.length === 0) {
             return null;
         }
-        
+
         const validMoves = position.validMoves;
         const gameState = position.gameState;
-        
+
         if (IPVGO_CONFIG.DETAILED_LOGGING) {
             this.ns.print(`Analyzing ${validMoves.length} possible moves...`);
         }
-        
+
         // Simple heuristic-based move selection
         let bestMove = null;
         let bestScore = -Infinity;
-        
+
         for (const move of validMoves) {
             const score = this.evaluateMove(move, position);
             if (score > bestScore) {
@@ -126,51 +126,51 @@ class IPvGOPlayer {
                 bestMove = move;
             }
         }
-        
+
         return bestMove;
     }
-    
+
     evaluateMove(move, position) {
         // Basic move evaluation heuristics
         let score = 0;
-        
+
         // Prefer moves that aren't on the edge (generally safer)
         const boardSize = position.gameState?.board?.length || 13;
         const [x, y] = move;
-        
+
         // Distance from edges (center is better)
         const distFromEdge = Math.min(x, y, boardSize - 1 - x, boardSize - 1 - y);
         score += distFromEdge * 0.5;
-        
+
         // Add some randomness to avoid predictable play
         score += Math.random() * 2;
-        
+
         // Prefer moves that capture territory or defend
         if (position.analysis) {
             // More sophisticated analysis if available
             try {
                 const chains = position.chains || [];
                 const nearby = this.getNearbyPieces(move, position.gameState.board);
-                
+
                 // Bonus for connecting to our pieces
                 if (nearby.ours > 0) score += nearby.ours * 3;
-                
+
                 // Penalty for dangerous moves near opponent
                 if (nearby.theirs > nearby.ours) score -= nearby.theirs * 2;
-                
+
             } catch (e) {
                 // Ignore analysis errors
             }
         }
-        
+
         return score;
     }
-    
+
     getNearbyPieces(move, board) {
         const [x, y] = move;
-        const directions = [[0,1], [0,-1], [1,0], [-1,0]];
+        const directions = [[0, 1], [0, -1], [1, 0], [-1, 0]];
         let ours = 0, theirs = 0;
-        
+
         for (const [dx, dy] of directions) {
             const nx = x + dx;
             const ny = y + dy;
@@ -179,14 +179,14 @@ class IPvGOPlayer {
                 else if (board[nx][ny] === "O") theirs++;
             }
         }
-        
+
         return { ours, theirs };
     }
-    
+
     shouldPass() {
         const gameState = this.getGameState();
         if (!gameState) return false;
-        
+
         // Pass if we're winning by a lot or losing badly
         try {
             const score = this.ns.go.getScore();
@@ -199,10 +199,10 @@ class IPvGOPlayer {
             const validMoves = this.getValidMoves();
             return validMoves.length < 3; // Pass if very few moves left
         }
-        
+
         return false;
     }
-    
+
     shouldResign() {
         try {
             const score = this.ns.go.getScore();
@@ -214,38 +214,38 @@ class IPvGOPlayer {
         }
         return false;
     }
-    
+
     async makeMove() {
         if (this.shouldResign()) {
             this.ns.print(`${RED}Resigning - position too poor${RESET}`);
             return this.ns.go.resign();
         }
-        
+
         if (this.shouldPass()) {
             this.ns.print(`${YELLOW}Passing - strategic decision${RESET}`);
             return this.ns.go.passTurn();
         }
-        
+
         const move = this.findBestMove();
         if (!move) {
             this.ns.print(`${YELLOW}No valid moves - passing${RESET}`);
             return this.ns.go.passTurn();
         }
-        
+
         const [x, y] = move;
         if (IPVGO_CONFIG.DETAILED_LOGGING) {
             this.ns.print(`Making move: (${x}, ${y})`);
         }
-        
+
         return this.ns.go.makeMove(x, y);
     }
-    
+
     async playGame() {
         this.ns.print(`${BLUE}=== playGame() starting ===${RESET}`);
-        
+
         let moveCount = 0;
         const maxMoves = 200; // Safety limit
-        
+
         while (moveCount < maxMoves) {
             this.ns.print(`${CYAN}--- Move ${moveCount + 1} ---${RESET}`);
             const gameState = this.ns.go.getGameState();
@@ -253,7 +253,7 @@ class IPvGOPlayer {
                 this.ns.print(`${RED}Cannot get game state${RESET}`);
                 break;
             }
-            
+
             this.ns.print(`Current turn: ${gameState.currentPlayer}`);
 
             if (gameState.currentPlayer === "None") {
@@ -261,30 +261,30 @@ class IPvGOPlayer {
                 this.handleGameEnd(gameState);
                 break;
             }
-            
+
             if (gameState.currentPlayer === "Black") {
                 this.ns.print(`${CYAN}Our turn (Move ${moveCount + 1})${RESET}`);
                 await this.makeMove();
                 moveCount++;
             }
-            
+
             await this.ns.sleep(IPVGO_CONFIG.MOVE_DELAY);
         }
-        
+
         if (moveCount >= maxMoves) {
             this.ns.print(`${YELLOW}Game reached move limit - likely stuck${RESET}`);
         }
 
         this.ns.print(`${BLUE}=== playGame() ended ===${RESET}`);
     }
-    
+
     handleGameEnd(gameState) {
         this.gamesPlayed++;
-        
+
         try {
             const result = this.ns.go.getScore();
             const isWin = result && result.territoryControl > 0.5;
-            
+
             if (isWin) {
                 this.wins++;
                 this.ns.print(`${GREEN}🎉 Victory! Territory control: ${(result.territoryControl * 100).toFixed(1)}%${RESET}`);
@@ -292,7 +292,7 @@ class IPvGOPlayer {
                 this.losses++;
                 this.ns.print(`${RED}💀 Defeat. Territory control: ${(result.territoryControl * 100).toFixed(1)}%${RESET}`);
             }
-            
+
             // Track opponent stats
             const opponent = gameState.opponent || "Unknown";
             if (!this.stats.has(opponent)) {
@@ -301,19 +301,19 @@ class IPvGOPlayer {
             const opponentStats = this.stats.get(opponent);
             if (isWin) opponentStats.wins++;
             else opponentStats.losses++;
-            
+
         } catch (e) {
             this.ns.print(`${YELLOW}Game ended - result unclear${RESET}`);
         }
-        
+
         this.showStats();
     }
-    
+
     showStats() {
         if (this.gamesPlayed % IPVGO_CONFIG.STATS_INTERVAL === 0 || this.gamesPlayed <= 5) {
             const winRate = this.gamesPlayed > 0 ? (this.wins / this.gamesPlayed * 100).toFixed(1) : 0;
             this.ns.print(`${CYAN}--- Stats: ${this.wins}W-${this.losses}L (${winRate}% win rate) ---${RESET}`);
-            
+
             // Show opponent breakdown
             for (const [opponent, stats] of this.stats) {
                 const total = stats.wins + stats.losses;
@@ -322,7 +322,7 @@ class IPvGOPlayer {
             }
         }
     }
-    
+
     findBestOpponent() {
         // Try preferred opponents in order
         for (const opponent of IPVGO_CONFIG.PREFERRED_OPPONENTS) {
@@ -337,19 +337,19 @@ class IPvGOPlayer {
         }
         return null;
     }
-    
+
     startNewGame() {
         const opponent = this.findBestOpponent();
         if (!opponent) {
             this.ns.print(`${RED}No suitable opponents available${RESET}`);
             return false;
         }
-        
+
         try {
-            const boardSize = IPVGO_CONFIG.TARGET_SIZE === "random" ? 
-                ["small", "medium", "large"][Math.floor(Math.random() * 3)] : 
+            const boardSize = IPVGO_CONFIG.TARGET_SIZE === "random" ?
+                ["small", "medium", "large"][Math.floor(Math.random() * 3)] :
                 IPVGO_CONFIG.TARGET_SIZE;
-                
+
             return this.ns.go.startGame(opponent, boardSize);
         } catch (e) {
             this.ns.print(`${RED}Failed to start game: ${e.message}${RESET}`);
@@ -376,19 +376,19 @@ export async function main(ns) {
         ns.tprint(`${RED}⚠️ IPvGO API not available! Make sure you have access to the minigame.${RESET}`);
         return;
     }
-    
+
     const player = new IPvGOPlayer(ns);
-    
+
     ns.tprint(`${GREEN}🔄 IPvGO automation started${RESET}`);
     ns.tprint(`Strategy: Target ${IPVGO_CONFIG.TARGET_SIZE} boards vs preferred opponents`);
-    
+
     while (true) {
         try {
             // Check if we're already in a game
             const gameState = ns.go.getGameState();
             const opponent = ns.go.getOpponent();
             const currentPlayer = ns.go.getCurrentPlayer();
-            
+
             if (gameState && currentPlayer !== "None") {
                 // Continue existing game
                 ns.print(`${YELLOW}Resuming existing game against ${opponent}${RESET}`);
@@ -404,10 +404,10 @@ export async function main(ns) {
                     await ns.sleep(10000);
                 }
             }
-            
+
             // Pause between games
             await ns.sleep(IPVGO_CONFIG.GAME_DELAY);
-            
+
         } catch (error) {
             ns.print(`${RED}Error: ${error.message}${RESET}`);
             await ns.sleep(5000);
