@@ -27,7 +27,7 @@ const IPVGO_CONFIG = {
     TARGET_SIZE: "medium",         // "small", "medium", "large", or "random"
     
     // Logging
-    DETAILED_LOGGING: true,        // Show move-by-move analysis
+    DETAILED_LOGGING: false,       // Show move-by-move analysis (default, can override with args)
     STATS_INTERVAL: 10,            // Show stats every N games
 };
 
@@ -364,7 +364,13 @@ class IPvGOPlayer {
 
 export async function main(ns) {
     ns.disableLog("sleep");
-    
+
+    // Parse script arguments for logging
+    const args = ns.args || [];
+    if (args.includes("--log") || args.includes("--detailed-logging")) {
+        IPVGO_CONFIG.DETAILED_LOGGING = true;
+    }
+
     // Check if IPvGO is available
     if (!ns.go) {
         ns.tprint(`${RED}⚠️ IPvGO API not available! Make sure you have access to the minigame.${RESET}`);
