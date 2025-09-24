@@ -106,8 +106,8 @@ export async function main(ns) {
       }
       if (purchase === -1 || purchase === false) {
         ns.print(`${red}ERROR Attempted upgrade purchase failed${reset}`);
-        ns.printf("/tbudget = $%.2f", budget);
-        ns.printf("/tcost = $%.2f", upgrade.cost);
+        ns.printf("\tbudget = $%.2f", budget);
+        ns.printf("\tcost = $%.2f", upgrade.cost);
       } else {
         budget -= upgrade.cost;
       }
