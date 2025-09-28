@@ -3,45 +3,6 @@
 const red = "\u001b[31m";
 const reset = "\u001b[0m";
 
-const LOG_FILE = "/hacknet-purchases.txt";
-
-function ensureLogHeader(ns) {
-  if (!ns.fileExists(LOG_FILE, "home")) {
-    ns.write(
-      LOG_FILE,
-      "timestamp_ms,type,nodeIndex,cost,level,ram,cores,total_income_ps\n",
-      "w"
-    );
-  }
-}
-
-function logPurchase(ns, { type, nodeIndex, cost, stats, total_income_ps }) {
-  const line = [
-    Date.now(),
-    type,
-    nodeIndex ?? "",
-    cost ?? "",
-    stats?.level ?? "",
-    stats?.ram ?? "",
-    stats?.cores ?? "",
-    total_income_ps ?? ""
-  ].join(",") + "\n";
-  ns.write(LOG_FILE, line, "a");
-}
-
-function getTotalHacknetIncome(ns) {
-  const n = ns.hacknet.numNodes();
-  let total = 0;
-  for (let i = 0; i < n; i++) {
-    const s = ns.hacknet.getNodeStats(i);
-    if (typeof s.production === "number" && isFinite(s.production)) {
-      total += s.production; // $/sec for classic Hacknet Nodes
-    }
-  }
-  return total;
-}
-
-
 function estimateProduction(level, ram, cores) {
   const ramMult = Math.pow(1.035, ram - 1);
   const coreMult = 1 + (cores - 1) / 5;
@@ -124,9 +85,6 @@ function getBestHacknetUpgrade(ns) {
 export async function main(ns) {
   const budgetMult = 0.1;
   let budget = ns.getPlayer().money * budgetMult;
-
-  ensureLogHeader(ns);
-
   while (true) {
     const upgrade = getBestHacknetUpgrade(ns);
     if (upgrade.cost <= budget) {
@@ -143,7 +101,7 @@ export async function main(ns) {
           purchase = ns.hacknet.upgradeCore(upgrade.nodeIndex, 1);
           break;
         case "purchase-node":
-          purchase = ns.hacknet.purchaseNode(); // returns index or -1
+          purchase = ns.hacknet.purchaseNode();
           break;
       }
       if (purchase === -1 || purchase === false) {
@@ -152,24 +110,6 @@ export async function main(ns) {
         ns.printf("\tcost = $%.2f", upgrade.cost);
       } else {
         budget -= upgrade.cost;
-
-        // Determine which node index to log
-        const nodeIndex =
-          upgrade.type === "purchase-node" ? purchase : upgrade.nodeIndex;
-
-        // Grab stats after purchase so "level" reflects the new value
-        const stats = ns.hacknet.getNodeStats(nodeIndex); 
-        
-        // Get total income after purchase
-        const totalIncome = getTotalHacknetIncome(ns);
-
-        logPurchase(ns, {
-          type: upgrade.type,
-          nodeIndex,
-          cost: upgrade.cost,
-          stats,
-          total_income_ps: totalIncome
-        });
       }
     } else {
       budget = ns.getPlayer().money * budgetMult;
