@@ -219,6 +219,11 @@ function shouldAscendMember(ns, memberName) {
 export async function main(ns) {
     ns.disableLog("sleep");
     
+    if (!ns.gang.inGang()) {
+        ns.tprint("No gang exists. Exiting gang-manager script.");
+        return;
+    }
+    
     while (true) {
         try {
             const members = ns.gang.getMemberNames();
