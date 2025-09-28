@@ -9,13 +9,13 @@ function ensureLogHeader(ns) {
   if (!ns.fileExists(LOG_FILE, "home")) {
     ns.write(
       LOG_FILE,
-      "timestamp_ms,type,nodeIndex,cost,level,ram,cores\n",
+      "timestamp_ms,type,nodeIndex,cost,level,ram,cores,total_income_ps\n",
       "w"
     );
   }
 }
 
-function logPurchase(ns, { type, nodeIndex, cost, stats }) {
+function logPurchase(ns, { type, nodeIndex, cost, stats, total_income_ps }) {
   const line = [
     Date.now(),
     type,
@@ -23,10 +23,24 @@ function logPurchase(ns, { type, nodeIndex, cost, stats }) {
     cost ?? "",
     stats?.level ?? "",
     stats?.ram ?? "",
-    stats?.cores ?? ""
+    stats?.cores ?? "",
+    total_income_ps ?? ""
   ].join(",") + "\n";
   ns.write(LOG_FILE, line, "a");
 }
+
+function getTotalHacknetIncome(ns) {
+  const n = ns.hacknet.numNodes();
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const s = ns.hacknet.getNodeStats(i);
+    if (typeof s.production === "number" && isFinite(s.production)) {
+      total += s.production; // $/sec for classic Hacknet Nodes
+    }
+  }
+  return total;
+}
+
 
 function estimateProduction(level, ram, cores) {
   const ramMult = Math.pow(1.035, ram - 1);
@@ -144,13 +158,17 @@ export async function main(ns) {
           upgrade.type === "purchase-node" ? purchase : upgrade.nodeIndex;
 
         // Grab stats after purchase so "level" reflects the new value
-        const stats = ns.hacknet.getNodeStats(nodeIndex);
+        const stats = ns.hacknet.getNodeStats(nodeIndex); 
+        
+        // Get total income after purchase
+        const totalIncome = getTotalHacknetIncome(ns);
 
         logPurchase(ns, {
           type: upgrade.type,
           nodeIndex,
           cost: upgrade.cost,
-          stats
+          stats,
+          total_income_ps: totalIncome
         });
       }
     } else {
