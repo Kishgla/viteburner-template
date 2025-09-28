@@ -3,6 +3,31 @@
 const red = "\u001b[31m";
 const reset = "\u001b[0m";
 
+const LOG_FILE = "/hacknet-purchases.txt";
+
+function ensureLogHeader(ns) {
+  if (!ns.fileExists(LOG_FILE, "home")) {
+    ns.write(
+      LOG_FILE,
+      "timestamp_ms,type,nodeIndex,cost,level,ram,cores\n",
+      "w"
+    );
+  }
+}
+
+function logPurchase(ns, { type, nodeIndex, cost, stats }) {
+  const line = [
+    Date.now(),
+    type,
+    nodeIndex ?? "",
+    cost ?? "",
+    stats?.level ?? "",
+    stats?.ram ?? "",
+    stats?.cores ?? ""
+  ].join(",") + "\n";
+  ns.write(LOG_FILE, line, "a");
+}
+
 function estimateProduction(level, ram, cores) {
   const ramMult = Math.pow(1.035, ram - 1);
   const coreMult = 1 + (cores - 1) / 5;
@@ -85,6 +110,9 @@ function getBestHacknetUpgrade(ns) {
 export async function main(ns) {
   const budgetMult = 0.1;
   let budget = ns.getPlayer().money * budgetMult;
+
+  ensureLogHeader(ns);
+
   while (true) {
     const upgrade = getBestHacknetUpgrade(ns);
     if (upgrade.cost <= budget) {
@@ -101,7 +129,7 @@ export async function main(ns) {
           purchase = ns.hacknet.upgradeCore(upgrade.nodeIndex, 1);
           break;
         case "purchase-node":
-          purchase = ns.hacknet.purchaseNode();
+          purchase = ns.hacknet.purchaseNode(); // returns index or -1
           break;
       }
       if (purchase === -1 || purchase === false) {
@@ -110,6 +138,20 @@ export async function main(ns) {
         ns.printf("\tcost = $%.2f", upgrade.cost);
       } else {
         budget -= upgrade.cost;
+
+        // Determine which node index to log
+        const nodeIndex =
+          upgrade.type === "purchase-node" ? purchase : upgrade.nodeIndex;
+
+        // Grab stats after purchase so "level" reflects the new value
+        const stats = ns.hacknet.getNodeStats(nodeIndex);
+
+        logPurchase(ns, {
+          type: upgrade.type,
+          nodeIndex,
+          cost: upgrade.cost,
+          stats
+        });
       }
     } else {
       budget = ns.getPlayer().money * budgetMult;
