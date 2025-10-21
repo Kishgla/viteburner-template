@@ -11,5 +11,6 @@ export async function main(ns) {
   while (true) {
     ns.tprint(`${cyan}⚠️ this is not red text${reset}`);
     await ns.sleep(10000)
+    // This is a test comment
   }
 }
