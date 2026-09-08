@@ -107,8 +107,8 @@ function shouldSellStock(info) {
 }
 
 function shouldShortStock(ns, info) {
-    if (!ns.stock.has4SDataTIXAPI()) return false; // Need 4S data for shorts
-    if (!ns.stock.hasWSEAccount()) return false; // Need WSE account
+    if (!ns.stock.has4SDataTixApi()) return false; // Need 4S data for shorts
+    if (!ns.stock.hasWseAccount()) return false; // Need WSE account
     
     // Check if we can actually short (this will return false if shorting isn't unlocked)
     try {
@@ -208,7 +208,7 @@ export async function main(ns) {
     ns.disableLog("stock.getForecast");
     
     // Check if we have stock market access
-    if (!ns.stock.hasTIXAPIAccess()) {
+    if (!ns.stock.hasTixApiAccess()) {
         ns.tprint(`${RED}⚠️ No TIX API access! Buy the TIX API access first.${RESET}`);
         return;
     }
@@ -225,8 +225,8 @@ export async function main(ns) {
             const reserveCash = portfolioValue * STOCK_CONFIG.CASH_RESERVE_PCT;
             
             ns.print(`=== Stock Trading Cycle ===`);
-            ns.print(`Portfolio Value: $${ns.formatNumber(portfolioValue)}`);
-            ns.print(`Available Cash: $${ns.formatNumber(cash)}`);
+            ns.print(`Portfolio Value: $${ns.format.number(portfolioValue)}`);
+            ns.print(`Available Cash: $${ns.format.number(cash)}`);
             
             for (const symbol of symbols) {
                 const info = getStockInfo(ns, symbol);
@@ -300,7 +300,7 @@ export async function main(ns) {
                 // Logging
                 if (action !== "HOLD" || totalPnL !== 0) {
                     const color = totalPnL > 0 ? GREEN : totalPnL < 0 ? RED : "";
-                    ns.print(`${symbol}: ${action} | Forecast: ${(info.forecast * 100).toFixed(1)}% | P&L: ${color}$${ns.formatNumber(totalPnL)}${RESET}`);
+                    ns.print(`${symbol}: ${action} | Forecast: ${(info.forecast * 100).toFixed(1)}% | P&L: ${color}$${ns.format.number(totalPnL)}${RESET}`);
                 }
             }
             

@@ -14,14 +14,14 @@ const RESET = "\u001b[0m";
  */
 function getMaxAffordableRam(ns, budget) {
   let ram = 2; // minimum server size
-  while (ram <= MAX_RAM && ns.getPurchasedServerCost(ram * 2) < budget) {
+  while (ram <= MAX_RAM && ns.cloud.getServerCost(ram * 2) < budget) {
     ram *= 2;
   }
   return ram;
 }
 
 function getSmallestOwnedServer(ns) {
-  const servers = ns.getPurchasedServers();
+  const servers = ns.cloud.getServerNames();
   if (servers.length === 0) return null;
 
   let smallest = servers[0];
@@ -47,21 +47,21 @@ function getSmallestOwnedServer(ns) {
  */
 export async function main(ns) {
   ns.disableLog("getServerMaxRam");
-  const maxServers = ns.getPurchasedServerLimit();
+  const maxServers = ns.cloud.getServerLimit();
   while (true) {
     const budget = ns.getPlayer().money * BUDGET_RATIO;
     const ramToBuy = getMaxAffordableRam(ns, budget);
     const smallestServer = getSmallestOwnedServer(ns);
-    const serversOwned = ns.getPurchasedServers().length;
+    const serversOwned = ns.cloud.getServerNames().length;
     const newServerName = `Server-${serversOwned.toString().padStart(2, '0')}`;
 
-    if (ns.getPurchasedServerCost(ramToBuy) < budget) {
+    if (ns.cloud.getServerCost(ramToBuy) < budget) {
       if (serversOwned < maxServers) {
         // buy a new server with ramToBuy
-        const ret = ns.purchaseServer(newServerName, ramToBuy);
+        const ret = ns.cloud.purchaseServer(newServerName, ramToBuy);
         if (ret === "") {
           ns.tprint(
-            `${YELLOW}⚠️ ns.purchaseServer() failed${RESET}\n` +
+            `${YELLOW}⚠️ ns.cloud.purchaseServer() failed${RESET}\n` +
             `  └─ newServerName = ${newServerName}\n` +
             `  └─ ramToBuy = ${ramToBuy}`
           );
@@ -69,16 +69,16 @@ export async function main(ns) {
       } else if (ramToBuy > ns.getServerMaxRam(smallestServer)) {
         // replace the smallest server with a new one
         ns.killall(smallestServer);
-        if (!ns.deleteServer(smallestServer)) {
+        if (!ns.cloud.deleteServer(smallestServer)) {
           ns.tprint(
-            `${YELLOW}⚠️ ns.deleteServer() failed${RESET}\n` +
+            `${YELLOW}⚠️ ns.cloud.deleteServer() failed${RESET}\n` +
             `  └─ smallestServer = ${smallestServer}`
           );
         } else {
-          const ret = ns.purchaseServer(smallestServer, ramToBuy);
+          const ret = ns.cloud.purchaseServer(smallestServer, ramToBuy);
           if (ret === "") {
             ns.tprint(
-              `${YELLOW}⚠️ ns.purchaseServer() failed${RESET}\n` +
+              `${YELLOW}⚠️ ns.cloud.purchaseServer() failed${RESET}\n` +
               `  └─ smallestServer = ${smallestServer}\n` +
               `  └─ ramToBuy = ${ramToBuy}`
             );
