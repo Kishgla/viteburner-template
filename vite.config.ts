@@ -16,6 +16,9 @@ export default defineConfig({
   },
   viteburner: {
     watch: [{ pattern: 'src/**/*.{js,ts}', transform: true }, { pattern: 'src/**/*.{script,txt}' }],
+    download: {
+      location: (file) => file.startsWith('stock-influence/') ? null : `src/${file}`
+    },
     sourcemap: 'inline',
   },
 });
