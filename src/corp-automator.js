@@ -17,22 +17,13 @@ const BOOST_MATERIALS = [
 /** @param {NS} ns */
 function killOlderInstances(ns) {
   const scriptName = ns.getScriptName();
-  const visited = new Set();
-  const pending = [ns.getHostname()];
   let killed = 0;
 
-  while (pending.length > 0) {
-    const host = pending.pop();
-    if (visited.has(host)) continue;
-    visited.add(host);
-    pending.push(...ns.scan(host).filter((neighbor) => !visited.has(neighbor)));
-
-    for (const process of ns.ps(host)) {
-      // PIDs increase as scripts launch, so only an older copy is eligible.
-      // This prevents two nearly simultaneous launches from killing the newer one.
-      if (process.filename === scriptName && process.pid < ns.pid && ns.kill(process.pid)) {
-        killed += 1;
-      }
+  for (const process of ns.ps('home')) {
+    // PIDs increase as scripts launch, so only an older copy is eligible.
+    // This prevents two nearly simultaneous launches from killing the newer one.
+    if (process.filename === scriptName && process.pid < ns.pid && ns.kill(process.pid)) {
+      killed += 1;
     }
   }
 
@@ -125,77 +116,160 @@ function setExportRoute(ns, divisionName, cities, sourceCity, targetCity, materi
   }
 }
 
+/**
+ * Calculate the exact Lagrange optimum for a fixed amount of boost-material
+ * storage. Negative solutions are removed and the formula is recalculated to
+ * enforce the quantity >= 0 constraints.
+ * @param {NS} ns
+ */
+function getOptimalBoostQuantities(ns, industry, storageSpace) {
+  const quantities = new Map(BOOST_MATERIALS.map(([material]) => [material, 0]));
+  let active = BOOST_MATERIALS.map(([material, factor]) => ({
+    material,
+    coefficient: industry[factor] ?? 0,
+    size: ns.corporation.getMaterialData(material).size,
+  })).filter(({ coefficient }) => coefficient > 0);
+
+  while (active.length > 0) {
+    const coefficientSum = active.reduce((sum, entry) => sum + entry.coefficient, 0);
+    const sizeSum = active.reduce((sum, entry) => sum + entry.size, 0);
+    const results = active.map((entry) => ({
+      ...entry,
+      quantity: (entry.coefficient * (storageSpace + 500 * sizeSum)) / (entry.size * coefficientSum) - 500,
+    }));
+    const positive = results.filter(({ quantity }) => quantity > 0);
+
+    if (positive.length === results.length) {
+      for (const { material, quantity } of results) quantities.set(material, quantity);
+      break;
+    }
+    active = positive;
+  }
+
+  return quantities;
+}
+
 /** @param {NS} ns */
 function buyDivisionMaterials(ns, divisionName) {
   const corp = ns.corporation;
   const division = corp.getDivision(divisionName);
   const cities = division.cities.filter((city) => corp.hasWarehouse(divisionName, city));
   const industry = corp.getIndustryData(division.industry);
+  const canExport = corp.hasUnlock('Export');
   const materials = BOOST_MATERIALS.filter(([, factor]) => industry[factor] > 0).map(([material]) => material);
   if (cities.length === 0 || materials.length === 0) return;
 
-  // Keep a portion of every warehouse empty for production inputs and output.
-  // Track purchases planned below because sizeUsed does not update until the
-  // corporation processes its next purchase state.
-  const availableSpace = new Map(
+  const cityData = new Map();
+  for (const city of cities) {
+    const warehouse = corp.getWarehouse(divisionName, city);
+    const stored = new Map(
+      BOOST_MATERIALS.map(([material]) => [material, corp.getMaterial(divisionName, city, material).stored]),
+    );
+    const boostSpaceUsed = BOOST_MATERIALS.reduce(
+      (total, [material]) => total + stored.get(material) * corp.getMaterialData(material).size,
+      0,
+    );
+    const nonBoostSpaceUsed = Math.max(0, warehouse.sizeUsed - boostSpaceUsed);
+    const boostSpaceTarget = Math.max(0, warehouse.size * (1 - WAREHOUSE_PRODUCTION_RESERVE) - nonBoostSpaceUsed);
+    const targets = getOptimalBoostQuantities(ns, industry, boostSpaceTarget);
+    cityData.set(city, { warehouse, stored, targets, boostSpaceTarget });
+
+    // Sell toward the optimum rather than using MAX, which could overshoot it.
+    for (const [material] of BOOST_MATERIALS) {
+      const excess = stored.get(material) - targets.get(material);
+      corp.buyMaterial(divisionName, city, material, 0);
+      corp.sellMaterial(
+        divisionName,
+        city,
+        material,
+        excess > 0 ? String(excess / CORPORATION_CYCLE_SECONDS) : '0',
+        'MP',
+      );
+    }
+  }
+
+  const profitRate = Math.max(0, division.lastCycleRevenue - division.lastCycleExpenses);
+  const purchaseBudget = profitRate * MATERIAL_BUDGET_FRACTION;
+  const transientSpace = new Map(
     cities.map((city) => {
-      const warehouse = corp.getWarehouse(divisionName, city);
-      const reservedSpace = warehouse.size * WAREHOUSE_PRODUCTION_RESERVE;
-      return [city, Math.max(0, warehouse.size - warehouse.sizeUsed - reservedSpace)];
+      const { warehouse } = cityData.get(city);
+      return [city, Math.max(0, warehouse.size * (1 - WAREHOUSE_PRODUCTION_RESERVE) - warehouse.sizeUsed)];
     }),
   );
+  const plans = [];
 
-  // The last completed cycle is stable while the current cycle's figures reset
-  // between corporation states.
-  const profitRate = Math.max(0, division.lastCycleRevenue - division.lastCycleExpenses);
-  const budgetPerMaterial = (profitRate * MATERIAL_BUDGET_FRACTION) / materials.length;
-  const canExport = corp.hasUnlock('Export');
-
-  for (const materialName of materials) {
-    const materialSize = corp.getMaterialData(materialName).size;
-    const prices = cities.map((city) => ({
-      city,
-      price: corp.getMaterial(divisionName, city, materialName).marketPrice,
-    }));
+  for (const material of materials) {
+    const materialSize = corp.getMaterialData(material).size;
+    const deficits = new Map(
+      cities.map((city) => {
+        const data = cityData.get(city);
+        return [city, Math.max(0, data.targets.get(material) - data.stored.get(material))];
+      }),
+    );
 
     if (canExport) {
-      const cheapest = prices.reduce((best, current) => (current.price < best.price ? current : best));
-      const budgetAmount = budgetPerMaterial / (cheapest.price * cities.length);
-      const sourceCapacity =
-        availableSpace.get(cheapest.city) / (materialSize * CORPORATION_CYCLE_SECONDS * cities.length);
-      const destinationCapacity = Math.min(
-        ...cities
-          .filter((city) => city !== cheapest.city)
-          .map((city) => availableSpace.get(city) / (materialSize * CORPORATION_CYCLE_SECONDS)),
+      // Prefer the cheapest city that can temporarily hold purchases before
+      // the EXPORT state. This falls back to another city instead of stalling
+      // when the absolute cheapest warehouse is already at its target.
+      const sourceCandidates = cities.filter((city) => transientSpace.get(city) > 0);
+      const source = (sourceCandidates.length > 0 ? sourceCandidates : cities).reduce((cheapest, city) =>
+        corp.getMaterial(divisionName, city, material).marketPrice <
+        corp.getMaterial(divisionName, cheapest, material).marketPrice
+          ? city
+          : cheapest,
       );
-      const amountPerCity = Math.max(0, Math.min(budgetAmount, sourceCapacity, destinationCapacity));
-
-      for (const city of cities) {
-        corp.buyMaterial(divisionName, city, materialName, city === cheapest.city ? amountPerCity * cities.length : 0);
-        if (city !== cheapest.city) {
-          setExportRoute(ns, divisionName, cities, cheapest.city, city, materialName, amountPerCity);
-        }
-      }
-
-      availableSpace.set(
-        cheapest.city,
-        availableSpace.get(cheapest.city) - amountPerCity * cities.length * materialSize * CORPORATION_CYCLE_SECONDS,
+      const desiredRate = [...deficits.values()].reduce((sum, amount) => sum + amount, 0) / CORPORATION_CYCLE_SECONDS;
+      const capacityRate = transientSpace.get(source) / (materialSize * CORPORATION_CYCLE_SECONDS);
+      const rateScale = desiredRate > 0 ? Math.min(1, capacityRate / desiredRate) : 0;
+      const exports = new Map(
+        cities.map((city) => [
+          city,
+          city === source ? 0 : (deficits.get(city) / CORPORATION_CYCLE_SECONDS) * rateScale,
+        ]),
       );
-      for (const city of cities) {
-        if (city === cheapest.city) continue;
-        availableSpace.set(city, availableSpace.get(city) - amountPerCity * materialSize * CORPORATION_CYCLE_SECONDS);
-      }
+      const buyRate = desiredRate * rateScale;
+      const price = corp.getMaterial(divisionName, source, material).marketPrice;
+      plans.push({ material, source, buyRate, exports, costRate: buyRate * price });
+      transientSpace.set(
+        source,
+        Math.max(0, transientSpace.get(source) - buyRate * materialSize * CORPORATION_CYCLE_SECONDS),
+      );
     } else {
-      // Buying identical units in each city costs amount * sum(city prices).
-      const budgetAmount = budgetPerMaterial / prices.reduce((total, entry) => total + entry.price, 0);
-      const capacityAmount = Math.min(
-        ...cities.map((city) => availableSpace.get(city) / (materialSize * CORPORATION_CYCLE_SECONDS)),
-      );
-      const amountPerCity = Math.max(0, Math.min(budgetAmount, capacityAmount));
       for (const city of cities) {
-        corp.buyMaterial(divisionName, city, materialName, amountPerCity);
-        availableSpace.set(city, availableSpace.get(city) - amountPerCity * materialSize * CORPORATION_CYCLE_SECONDS);
+        const desiredRate = deficits.get(city) / CORPORATION_CYCLE_SECONDS;
+        const capacityRate = transientSpace.get(city) / (materialSize * CORPORATION_CYCLE_SECONDS);
+        const buyRate = Math.min(desiredRate, capacityRate);
+        const price = corp.getMaterial(divisionName, city, material).marketPrice;
+        plans.push({ material, source: city, buyRate, exports: null, costRate: buyRate * price });
+        transientSpace.set(
+          city,
+          Math.max(0, transientSpace.get(city) - buyRate * materialSize * CORPORATION_CYCLE_SECONDS),
+        );
       }
+    }
+  }
+
+  const plannedCostRate = plans.reduce((sum, plan) => sum + plan.costRate, 0);
+  const budgetScale = plannedCostRate > 0 ? Math.min(1, purchaseBudget / plannedCostRate) : 0;
+
+  for (const city of cities) {
+    const { warehouse, boostSpaceTarget } = cityData.get(city);
+    ns.print(
+      `[materials] ${divisionName}/${city}: ` +
+        `warehouse=${warehouse.sizeUsed.toFixed(1)}/${warehouse.size.toFixed(1)}, ` +
+        `boostTarget=${boostSpaceTarget.toFixed(1)}, ` +
+        `profit=${ns.formatNumber(profitRate)}/s, ` +
+        `budget=${ns.formatNumber(purchaseBudget)}/s, ` +
+        `planned=${ns.formatNumber(plannedCostRate)}/s, ` +
+        `scale=${budgetScale.toFixed(6)}`,
+    );
+  }
+
+  for (const plan of plans) {
+    corp.buyMaterial(divisionName, plan.source, plan.material, plan.buyRate * budgetScale);
+    if (!plan.exports) continue;
+    for (const city of cities) {
+      setExportRoute(ns, divisionName, cities, plan.source, city, plan.material, plan.exports.get(city) * budgetScale);
     }
   }
 }
