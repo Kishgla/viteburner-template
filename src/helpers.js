@@ -34,6 +34,42 @@ export function getAllServerNames(ns) {
 }
 
 /**
+ * Finds the shortest connection path from home to a server.
+ * @param {NS} ns - The Netscript environment.
+ * @param {string} target - Destination server name.
+ * @return {string[] | null} The path from home, or null when not found.
+ */
+export function getServerPath(ns, target) {
+  const queue = ['home'];
+  const parent = new Map([['home', null]]);
+
+  while (queue.length > 0) {
+    const server = queue.shift();
+
+    if (server === target) {
+      const path = [];
+      let current = server;
+
+      while (current !== null) {
+        path.push(current);
+        current = parent.get(current) ?? null;
+      }
+
+      return path.reverse();
+    }
+
+    for (const neighbor of ns.scan(server)) {
+      if (!parent.has(neighbor)) {
+        parent.set(neighbor, server);
+        queue.push(neighbor);
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Returns a list of objects containing data for all servers passed in
  * @param {NS} ns - The Netscript environment.
  * @param {string[]} serverNames
