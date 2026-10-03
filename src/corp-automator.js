@@ -4,7 +4,6 @@ const ENERGY_TARGET = 0.99;
 const MORALE_TARGET = 0.99;
 const TEA_COST_PER_EMPLOYEE = 500_000;
 const PARTY_COST_PER_EMPLOYEE = 500_000;
-const MATERIAL_BUDGET_FRACTION = 0.5;
 const WAREHOUSE_PRODUCTION_RESERVE = 0.1;
 const CORPORATION_CYCLE_SECONDS = 10;
 const BOOST_MATERIALS = [
@@ -116,6 +115,161 @@ function setExportRoute(ns, divisionName, cities, sourceCity, targetCity, materi
   }
 }
 
+function exportAmountsMatch(current, desired) {
+  if (typeof desired === 'number') return Math.abs(Number(current) - desired) < 1e-9;
+  return String(current) === desired;
+}
+
+/**
+ * Reconcile the export routes for one source division and material. The filter
+ * limits which routes this policy owns, so boost-material routes are untouched.
+ * @param {NS} ns
+ */
+function syncExportRoutes(ns, sourceDivision, sourceCities, material, desiredRoutes, managesRoute) {
+  const corp = ns.corporation;
+  const activeRoutes = new Set();
+
+  for (const sourceCity of sourceCities) {
+    for (const order of [...corp.getMaterial(sourceDivision, sourceCity, material).exports]) {
+      if (!managesRoute(order)) continue;
+
+      const desired = desiredRoutes.find(
+        (route) =>
+          route.sourceCity === sourceCity && route.targetDivision === order.division && route.targetCity === order.city,
+      );
+      if (desired && exportAmountsMatch(order.amount, desired.amount)) {
+        activeRoutes.add(`${sourceCity}\0${order.division}\0${order.city}`);
+      } else {
+        corp.cancelExportMaterial(sourceDivision, sourceCity, order.division, order.city, material);
+      }
+    }
+  }
+
+  for (const route of desiredRoutes) {
+    const key = `${route.sourceCity}\0${route.targetDivision}\0${route.targetCity}`;
+    if (activeRoutes.has(key) || route.amount === 0) continue;
+    corp.exportMaterial(
+      sourceDivision,
+      route.sourceCity,
+      route.targetDivision,
+      route.targetCity,
+      material,
+      route.amount,
+    );
+  }
+}
+
+/** @param {NS} ns */
+function manageProductionExports(ns) {
+  const corp = ns.corporation;
+  if (!corp.hasUnlock('Export')) return;
+
+  const divisions = corp.getCorporation().divisions.map((name) => {
+    const division = corp.getDivision(name);
+    const industry = corp.getIndustryData(division.industry);
+    const cities = division.cities.filter((city) => corp.hasWarehouse(name, city));
+    return { name, division, industry, cities };
+  });
+  const requiredByMaterial = new Map();
+
+  for (const target of divisions) {
+    for (const [material, coefficient] of Object.entries(target.industry.requiredMaterials)) {
+      if (coefficient <= 0) continue;
+      if (!requiredByMaterial.has(material)) requiredByMaterial.set(material, []);
+      requiredByMaterial.get(material).push(target);
+    }
+  }
+
+  // Supply dependent divisions first. Prefer a producer in the same city and
+  // choose the highest-quality source when multiple divisions produce it.
+  for (const [material, targets] of requiredByMaterial) {
+    const producers = divisions.filter(({ industry }) => industry.producedMaterials?.includes(material));
+    const desiredByProducer = new Map(producers.map(({ name }) => [name, []]));
+
+    for (const target of targets) {
+      for (const targetCity of target.cities) {
+        const candidates = producers
+          .filter((producer) => producer.name !== target.name)
+          .flatMap((producer) =>
+            producer.cities.map((sourceCity) => ({
+              producer,
+              sourceCity,
+              sameCity: sourceCity === targetCity,
+              quality: corp.getMaterial(producer.name, sourceCity, material).quality,
+            })),
+          );
+        if (candidates.length === 0) continue;
+
+        const source = candidates.reduce((best, candidate) => {
+          if (candidate.sameCity !== best.sameCity) return candidate.sameCity ? candidate : best;
+          return candidate.quality > best.quality ? candidate : best;
+        });
+        desiredByProducer.get(source.producer.name).push({
+          sourceCity: source.sourceCity,
+          targetDivision: target.name,
+          targetCity,
+          amount: '(IPROD+IINV/10)*(-1)',
+        });
+      }
+    }
+
+    for (const producer of producers) {
+      syncExportRoutes(
+        ns,
+        producer.name,
+        producer.cities,
+        material,
+        desiredByProducer.get(producer.name),
+        (order) => order.division !== producer.name,
+      );
+    }
+  }
+
+  // Balance other produced materials inside their division. A city whose
+  // production exceeds sales sends that accumulating surplus to cities that
+  // are currently selling through everything they produce.
+  const boostMaterialNames = new Set(BOOST_MATERIALS.map(([material]) => material));
+  for (const producer of divisions) {
+    for (const material of producer.industry.producedMaterials ?? []) {
+      if (boostMaterialNames.has(material)) continue;
+
+      const snapshots = producer.cities.map((city) => ({
+        city,
+        data: corp.getMaterial(producer.name, city, material),
+      }));
+      const sources = snapshots.filter(({ data }) => data.productionAmount > data.actualSellAmount && data.stored > 0);
+      const destinations = snapshots.filter(({ data }) => data.actualSellAmount >= data.productionAmount);
+      const desiredRoutes = [];
+
+      // Cross-division consumers have priority over sales balancing.
+      if (!requiredByMaterial.has(material) && destinations.length > 0) {
+        for (const source of sources) {
+          const receivers = destinations.filter(({ city }) => city !== source.city);
+          if (receivers.length === 0) continue;
+          const surplusRate = source.data.productionAmount - source.data.actualSellAmount;
+          for (const receiver of receivers) {
+            desiredRoutes.push({
+              sourceCity: source.city,
+              targetDivision: producer.name,
+              targetCity: receiver.city,
+              amount: surplusRate / receivers.length,
+            });
+          }
+        }
+      }
+
+      syncExportRoutes(
+        ns,
+        producer.name,
+        producer.cities,
+        material,
+        desiredRoutes,
+        (order) => order.division === producer.name,
+      );
+    }
+  }
+}
+
 /**
  * Calculate the exact Lagrange optimum for a fixed amount of boost-material
  * storage. Negative solutions are removed and the formula is recalculated to
@@ -188,8 +342,6 @@ function buyDivisionMaterials(ns, divisionName) {
     }
   }
 
-  const profitRate = Math.max(0, division.lastCycleRevenue - division.lastCycleExpenses);
-  const purchaseBudget = profitRate * MATERIAL_BUDGET_FRACTION;
   const transientSpace = new Map(
     cities.map((city) => {
       const { warehouse } = cityData.get(city);
@@ -250,7 +402,6 @@ function buyDivisionMaterials(ns, divisionName) {
   }
 
   const plannedCostRate = plans.reduce((sum, plan) => sum + plan.costRate, 0);
-  const budgetScale = plannedCostRate > 0 ? Math.min(1, purchaseBudget / plannedCostRate) : 0;
 
   for (const city of cities) {
     const { warehouse, boostSpaceTarget } = cityData.get(city);
@@ -258,18 +409,15 @@ function buyDivisionMaterials(ns, divisionName) {
       `[materials] ${divisionName}/${city}: ` +
         `warehouse=${warehouse.sizeUsed.toFixed(1)}/${warehouse.size.toFixed(1)}, ` +
         `boostTarget=${boostSpaceTarget.toFixed(1)}, ` +
-        `profit=${ns.formatNumber(profitRate)}/s, ` +
-        `budget=${ns.formatNumber(purchaseBudget)}/s, ` +
-        `planned=${ns.formatNumber(plannedCostRate)}/s, ` +
-        `scale=${budgetScale.toFixed(6)}`,
+        `planned=${ns.format.number(plannedCostRate)}/s`,
     );
   }
 
   for (const plan of plans) {
-    corp.buyMaterial(divisionName, plan.source, plan.material, plan.buyRate * budgetScale);
+    corp.buyMaterial(divisionName, plan.source, plan.material, plan.buyRate);
     if (!plan.exports) continue;
     for (const city of cities) {
-      setExportRoute(ns, divisionName, cities, plan.source, city, plan.material, plan.exports.get(city) * budgetScale);
+      setExportRoute(ns, divisionName, cities, plan.source, city, plan.material, plan.exports.get(city));
     }
   }
 }
@@ -290,6 +438,11 @@ export async function main(ns) {
       } catch (error) {
         ns.print(`WARN: Could not manage materials for ${divisionName}: ${String(error)}`);
       }
+    }
+    try {
+      manageProductionExports(ns);
+    } catch (error) {
+      ns.print(`WARN: Could not manage production exports: ${String(error)}`);
     }
 
     // A corporation cycle is roughly ten seconds. Using a simple sleep also
