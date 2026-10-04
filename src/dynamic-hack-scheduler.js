@@ -229,7 +229,7 @@ function runPrepStep(ns, target, workers) {
   if (s.hackDifficulty > s.minDifficulty + SECURITY_BUFFER) {
     const weakenNeeded = Math.ceil((s.hackDifficulty - s.minDifficulty) / 0.05);
     const end = Date.now() + w + STEP_PAD;
-    const used = dispatchToEnd(ns, WEAKEN, [name], workers, weakenNeeded, w, end);
+    const used = dispatchToEnd(ns, WEAKEN, [name, false], workers, weakenNeeded, w, end);
     return used > 0;
   }
 
@@ -240,7 +240,7 @@ function runPrepStep(ns, target, workers) {
     const w2 = Math.ceil((growT * 0.004) / 0.05);
 
     const end = Date.now() + w + STEP_PAD;
-    const usedW = dispatchToEnd(ns, WEAKEN, [name], workers, w2, w, end);
+    const usedW = dispatchToEnd(ns, WEAKEN, [name, false], workers, w2, w, end);
     const usedG = dispatchToEnd(ns, GROW, [name, false], workers, growT, g, end - STEP_PAD);
     return (usedW + usedG) > 0;
   }
@@ -255,9 +255,9 @@ function scheduleBatch(ns, targetName, workers, stealFrac, latestEnd) {
 
   // Landing order: W2 -> G -> W1 -> H
   let ok = false;
-  ok = dispatchToEnd(ns, WEAKEN, [targetName], workers, w2, w, latestEnd) > 0 || ok;
+  ok = dispatchToEnd(ns, WEAKEN, [targetName, false], workers, w2, w, latestEnd) > 0 || ok;
   ok = dispatchToEnd(ns, GROW, [targetName, false], workers, growT, g, latestEnd - STEP_PAD, targetName) > 0 || ok;
-  ok = dispatchToEnd(ns, WEAKEN, [targetName], workers, w1, w, latestEnd - 2 * STEP_PAD) > 0 || ok;
+  ok = dispatchToEnd(ns, WEAKEN, [targetName, false], workers, w1, w, latestEnd - 2 * STEP_PAD) > 0 || ok;
   ok = dispatchToEnd(ns, HACK, [targetName, false], workers, hackT, h, latestEnd - 3 * STEP_PAD, targetName) > 0 || ok;
 
   return ok;
