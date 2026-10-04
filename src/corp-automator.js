@@ -6,6 +6,7 @@ const TEA_COST_PER_EMPLOYEE = 500_000;
 const PARTY_COST_PER_EMPLOYEE = 500_000;
 const WAREHOUSE_PRODUCTION_RESERVE = 0.1;
 const CORPORATION_CYCLE_SECONDS = 10;
+const TELEMETRY_FILE = 'corp-telemetry.txt';
 const BOOST_MATERIALS = [
   ['Hardware', 'hardwareFactor'],
   ['Robots', 'robotFactor'],
@@ -270,6 +271,91 @@ function manageProductionExports(ns) {
   }
 }
 
+/** @param {NS} ns */
+function writeTelemetry(ns, materialPlans) {
+  const corp = ns.corporation;
+  const corporation = corp.getCorporation();
+  const divisions = corporation.divisions.map((divisionName) => {
+    const division = corp.getDivision(divisionName);
+    const industry = corp.getIndustryData(division.industry);
+    const materialNames = [
+      ...new Set([
+        ...BOOST_MATERIALS.map(([material]) => material),
+        ...Object.keys(industry.requiredMaterials),
+        ...(industry.producedMaterials ?? []),
+      ]),
+    ];
+    const plan = materialPlans.get(divisionName);
+
+    return {
+      name: divisionName,
+      industry: division.industry,
+      revenue: division.lastCycleRevenue,
+      expenses: division.lastCycleExpenses,
+      profit: division.lastCycleRevenue - division.lastCycleExpenses,
+      plannedBoostPurchaseCostRate: plan?.plannedCostRate ?? 0,
+      plannedBoostPurchases: (plan?.plans ?? []).map((entry) => ({
+        material: entry.material,
+        sourceCity: entry.source,
+        buyRate: entry.buyRate,
+        costRate: entry.costRate,
+        exports: entry.exports ? Object.fromEntries(entry.exports) : null,
+      })),
+      cities: division.cities
+        .filter((city) => corp.hasWarehouse(divisionName, city))
+        .map((city) => {
+          const warehouse = corp.getWarehouse(divisionName, city);
+          return {
+            city,
+            warehouse: {
+              size: warehouse.size,
+              sizeUsed: warehouse.sizeUsed,
+              utilization: warehouse.size > 0 ? warehouse.sizeUsed / warehouse.size : 0,
+              boostSpaceTarget: warehouse.size * (1 - WAREHOUSE_PRODUCTION_RESERVE),
+            },
+            materials: Object.fromEntries(
+              materialNames.map((material) => {
+                const data = corp.getMaterial(divisionName, city, material);
+                return [
+                  material,
+                  {
+                    stored: data.stored,
+                    quality: data.quality,
+                    buyAmount: data.buyAmount,
+                    productionAmount: data.productionAmount,
+                    importAmount: data.importAmount,
+                    actualSellAmount: data.actualSellAmount,
+                    marketPrice: data.marketPrice,
+                    desiredSellAmount: data.desiredSellAmount,
+                    desiredSellPrice: data.desiredSellPrice,
+                    exports: data.exports,
+                  },
+                ];
+              }),
+            ),
+          };
+        }),
+    };
+  });
+
+  ns.write(
+    TELEMETRY_FILE,
+    `${JSON.stringify({
+      timestamp: Date.now(),
+      corporation: {
+        funds: corporation.funds,
+        revenue: corporation.revenue,
+        expenses: corporation.expenses,
+        profit: corporation.revenue - corporation.expenses,
+        prevState: corporation.prevState,
+        nextState: corporation.nextState,
+      },
+      divisions,
+    })}\n`,
+    'a',
+  );
+}
+
 /**
  * Calculate the exact Lagrange optimum for a fixed amount of boost-material
  * storage. Negative solutions are removed and the formula is recalculated to
@@ -311,7 +397,7 @@ function buyDivisionMaterials(ns, divisionName) {
   const industry = corp.getIndustryData(division.industry);
   const canExport = corp.hasUnlock('Export');
   const materials = BOOST_MATERIALS.filter(([, factor]) => industry[factor] > 0).map(([material]) => material);
-  if (cities.length === 0 || materials.length === 0) return;
+  if (cities.length === 0 || materials.length === 0) return { plannedCostRate: 0, plans: [] };
 
   const cityData = new Map();
   for (const city of cities) {
@@ -319,12 +405,10 @@ function buyDivisionMaterials(ns, divisionName) {
     const stored = new Map(
       BOOST_MATERIALS.map(([material]) => [material, corp.getMaterial(divisionName, city, material).stored]),
     );
-    const boostSpaceUsed = BOOST_MATERIALS.reduce(
-      (total, [material]) => total + stored.get(material) * corp.getMaterialData(material).size,
-      0,
-    );
-    const nonBoostSpaceUsed = Math.max(0, warehouse.sizeUsed - boostSpaceUsed);
-    const boostSpaceTarget = Math.max(0, warehouse.size * (1 - WAREHOUSE_PRODUCTION_RESERVE) - nonBoostSpaceUsed);
+    // Keep the long-term boost target stable. Input/output inventory may pause
+    // purchases through transientSpace below, but must not trigger a sell-and-
+    // rebuy cycle whenever its stored amount fluctuates.
+    const boostSpaceTarget = warehouse.size * (1 - WAREHOUSE_PRODUCTION_RESERVE);
     const targets = getOptimalBoostQuantities(ns, industry, boostSpaceTarget);
     cityData.set(city, { warehouse, stored, targets, boostSpaceTarget });
 
@@ -403,16 +487,6 @@ function buyDivisionMaterials(ns, divisionName) {
 
   const plannedCostRate = plans.reduce((sum, plan) => sum + plan.costRate, 0);
 
-  for (const city of cities) {
-    const { warehouse, boostSpaceTarget } = cityData.get(city);
-    ns.print(
-      `[materials] ${divisionName}/${city}: ` +
-        `warehouse=${warehouse.sizeUsed.toFixed(1)}/${warehouse.size.toFixed(1)}, ` +
-        `boostTarget=${boostSpaceTarget.toFixed(1)}, ` +
-        `planned=${ns.format.number(plannedCostRate)}/s`,
-    );
-  }
-
   for (const plan of plans) {
     corp.buyMaterial(divisionName, plan.source, plan.material, plan.buyRate);
     if (!plan.exports) continue;
@@ -420,6 +494,8 @@ function buyDivisionMaterials(ns, divisionName) {
       setExportRoute(ns, divisionName, cities, plan.source, city, plan.material, plan.exports.get(city));
     }
   }
+
+  return { plannedCostRate, plans };
 }
 
 /** @param {NS} ns */
@@ -428,13 +504,15 @@ export async function main(ns) {
   ns.disableLog('sleep');
 
   if (!ensureCorporationExists(ns)) return;
+  if (ns.args.includes('--reset-telemetry')) ns.write(TELEMETRY_FILE, '', 'w');
 
   ns.print('Employee energy and morale maintenance started.');
   while (true) {
     maintainEmployees(ns);
+    const materialPlans = new Map();
     for (const divisionName of ns.corporation.getCorporation().divisions) {
       try {
-        buyDivisionMaterials(ns, divisionName);
+        materialPlans.set(divisionName, buyDivisionMaterials(ns, divisionName));
       } catch (error) {
         ns.print(`WARN: Could not manage materials for ${divisionName}: ${String(error)}`);
       }
@@ -443,6 +521,11 @@ export async function main(ns) {
       manageProductionExports(ns);
     } catch (error) {
       ns.print(`WARN: Could not manage production exports: ${String(error)}`);
+    }
+    try {
+      writeTelemetry(ns, materialPlans);
+    } catch (error) {
+      ns.print(`WARN: Could not write corporation telemetry: ${String(error)}`);
     }
 
     // A corporation cycle is roughly ten seconds. Using a simple sleep also
