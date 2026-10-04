@@ -6,7 +6,7 @@ import {
   refreshServers,
   countAvailablePortOpeners,
   runAvailablePortOpeners
-} from "/helpers.js";
+} from "./helpers.js";
 
 /*******************************************************************************\
 |* Stock Influence Integration                                                 *|
