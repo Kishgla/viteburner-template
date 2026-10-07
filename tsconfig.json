@@ -3,21 +3,21 @@
     "module": "esnext",
     "target": "esnext",
     "lib": ["esnext", "dom"],
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "strict": true,
     "allowJs": true,
     "noEmit": true,
     "isolatedModules": true,
     "esModuleInterop": true,
-    "baseUrl": ".",
     "inlineSourceMap": true,
-    "moduleResolution": "Node",
+    "moduleResolution": "Bundler",
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "paths": {
       "@/*": ["./src/*"],
       "/src/*": ["./src/*"],
-      "@ns": ["./NetscriptDefinitions.d.ts"]
+      "@ns": ["./NetscriptDefinitions.d.ts"],
+      "viteburner": ["./node_modules/viteburner/dist/typings/index.d.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.js", "NetscriptDefinitions.d.ts", "vite.config.ts", "vite.config.js"]
