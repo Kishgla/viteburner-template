@@ -117,7 +117,8 @@ function freeRam(ns, host) {
 
 /** Spread threads across workers, scheduling a job to END at latestEnd. */
 function dispatchToEnd(ns, file, targetName, stock, batchId, workers, totalThreads, actionTime, latestEnd) {
-  if (totalThreads <= 0) return 0;
+  const launches = [];
+  if (totalThreads <= 0) return { threads: 0, launches };
   workers = sortWorkers(workers);
   const ramPerThread = ns.getScriptRam(file, "home");
   let remaining = totalThreads;
@@ -153,10 +154,105 @@ function dispatchToEnd(ns, file, targetName, stock, batchId, workers, totalThrea
     const pid = ns.exec(file, w.name, useThreads, targetName, stockFlag, delay, batchId);
     if (pid !== 0) {
       remaining -= useThreads;
+      launches.push({ pid, host: w.name, file, threads: useThreads });
       if (remaining <= 0) break;
     }
   }
-  return totalThreads - remaining;
+  return { threads: totalThreads - remaining, launches };
+}
+
+function operationName(file) {
+  if (file === HACK) return "hack";
+  if (file === GROW) return "grow";
+  return "weaken";
+}
+
+function recordLaunches(operations, file, result) {
+  for (const launch of result.launches) {
+    operations.push({ ...launch, operation: operationName(file) });
+  }
+}
+
+function batchCreatedAt(batchId, fallback) {
+  const match = batchId.match(/-([0-9a-z]+)-\d+-\d+$/);
+  if (!match) return fallback;
+  const timestamp = parseInt(match[1], 36);
+  return Number.isFinite(timestamp) ? timestamp : fallback;
+}
+
+/** Reconcile tracked state with worker process tables, including after a restart. */
+function reconcileBatches(ns, trackedBatches, workers) {
+  const now = Date.now();
+  const liveBatches = new Map();
+
+  for (const worker of workers) {
+    for (const process of ns.ps(worker.name)) {
+      if (!SCRIPT_LIST.includes(process.filename)) continue;
+      const batchId = String(process.args[3] ?? "");
+      if (!batchId.startsWith("batch-")) continue;
+
+      const target = String(process.args[0] ?? "");
+      const delay = Math.max(0, Number(process.args[2]) || 0);
+      const createdAt = batchCreatedAt(batchId, now);
+      const actionTime = process.filename === HACK
+        ? ns.getHackTime(target)
+        : process.filename === GROW
+          ? ns.getGrowTime(target)
+          : ns.getWeakenTime(target);
+      const operation = {
+        pid: process.pid,
+        host: worker.name,
+        file: process.filename,
+        threads: process.threads,
+        operation: operationName(process.filename),
+      };
+
+      if (!liveBatches.has(batchId)) {
+        liveBatches.set(batchId, {
+          id: batchId,
+          target,
+          expectedLanding: createdAt + delay + actionTime,
+          operations: [],
+          recovered: true,
+        });
+      }
+      const batch = liveBatches.get(batchId);
+      batch.expectedLanding = Math.max(batch.expectedLanding, createdAt + delay + actionTime);
+      batch.operations.push(operation);
+    }
+  }
+
+  for (const [batchId, batch] of trackedBatches) {
+    const live = liveBatches.get(batchId);
+    if (live) {
+      batch.operations = live.operations;
+      if (batch.recovered) batch.expectedLanding = live.expectedLanding;
+      liveBatches.delete(batchId);
+    } else {
+      // No matching PID remains, so the record is complete, killed, or otherwise stale.
+      trackedBatches.delete(batchId);
+    }
+  }
+
+  for (const [batchId, batch] of liveBatches) trackedBatches.set(batchId, batch);
+}
+
+function targetHasInFlightBatch(trackedBatches, targetName) {
+  for (const batch of trackedBatches.values()) {
+    if (batch.target === targetName && batch.operations.length > 0) return true;
+  }
+  return false;
+}
+
+function publishTrackingSnapshot(ns, trackedBatches, port) {
+  if (port === null) return;
+  const snapshot = {
+    schedulerPid: ns.pid,
+    timestamp: Date.now(),
+    batches: [...trackedBatches.values()],
+  };
+  ns.clearPort(port);
+  ns.writePort(port, JSON.stringify(snapshot));
 }
 
 /** Calculate batch threads for a self-contained HWGW batch.
@@ -232,7 +328,7 @@ function runPrepStep(ns, target, workers) {
     const weakenNeeded = Math.ceil((s.hackDifficulty - s.minDifficulty) / 0.05);
     const end = Date.now() + w + STEP_PAD;
     const used = dispatchToEnd(ns, WEAKEN, name, false, prepId, workers, weakenNeeded, w, end);
-    return used > 0;
+    return used.threads > 0;
   }
 
   if (s.moneyAvailable < s.moneyMax * FUNDING_THRESHOLD) {
@@ -245,7 +341,7 @@ function runPrepStep(ns, target, workers) {
     const end = Date.now() + w + STEP_PAD;
     const usedW = dispatchToEnd(ns, WEAKEN, name, false, prepId, workers, w2, w, end);
     const usedG = dispatchToEnd(ns, GROW, name, false, prepId, workers, growT, g, end - STEP_PAD);
-    return (usedW + usedG) > 0;
+    return (usedW.threads + usedG.threads) > 0;
   }
 
   return false;
@@ -257,20 +353,21 @@ function scheduleBatch(ns, targetName, workers, stealFrac, latestEnd, batchId) {
   const { hackT, growT, w1, w2 } = calcBatch(ns, targetName, stealFrac);
 
   // Landing order: W2 -> G -> W1 -> H
-  let ok = false;
-  ok = dispatchToEnd(ns, WEAKEN, targetName, false, batchId, workers, w2, w, latestEnd) > 0 || ok;
-  ok = dispatchToEnd(ns, GROW, targetName, false, batchId, workers, growT, g, latestEnd - STEP_PAD) > 0 || ok;
-  ok = dispatchToEnd(ns, WEAKEN, targetName, false, batchId, workers, w1, w, latestEnd - 2 * STEP_PAD) > 0 || ok;
-  ok = dispatchToEnd(ns, HACK, targetName, false, batchId, workers, hackT, h, latestEnd - 3 * STEP_PAD) > 0 || ok;
+  const operations = [];
+  recordLaunches(operations, WEAKEN, dispatchToEnd(ns, WEAKEN, targetName, false, batchId, workers, w2, w, latestEnd));
+  recordLaunches(operations, GROW, dispatchToEnd(ns, GROW, targetName, false, batchId, workers, growT, g, latestEnd - STEP_PAD));
+  recordLaunches(operations, WEAKEN, dispatchToEnd(ns, WEAKEN, targetName, false, batchId, workers, w1, w, latestEnd - 2 * STEP_PAD));
+  recordLaunches(operations, HACK, dispatchToEnd(ns, HACK, targetName, false, batchId, workers, hackT, h, latestEnd - 3 * STEP_PAD));
 
-  return ok;
+  if (operations.length === 0) return null;
+  return { id: batchId, target: targetName, expectedLanding: latestEnd, operations, recovered: false };
 }
 
 /** Attempt to keep up to PIPELINE batches in-flight for target.
  * We *project* stable state by making each batch self-contained (restore & re-weaken),
  * which allows safe overlap with only a CHAIN_SPACER between batch landings.
  */
-function fillPipeline(ns, targetName, workers, stealFrac) {
+function fillPipeline(ns, targetName, workers, stealFrac, trackedBatches) {
   // Try to schedule up to PIPELINE batches, spaced by CHAIN_SPACER
   let scheduled = 0;
   const { w } = times(ns, targetName);
@@ -279,8 +376,9 @@ function fillPipeline(ns, targetName, workers, stealFrac) {
 
   for (let i = 0; i < PIPELINE; i++) {
     const batchId = createJobId(ns, "batch", targetName);
-    const ok = scheduleBatch(ns, targetName, workers, stealFrac, latestEnd, batchId);
-    if (!ok) break;
+    const batch = scheduleBatch(ns, targetName, workers, stealFrac, latestEnd, batchId);
+    if (!batch) break;
+    trackedBatches.set(batchId, batch);
     scheduled++;
     latestEnd += CHAIN_SPACER;
   }
@@ -294,6 +392,14 @@ export async function main(ns) {
   ns.disableLog("sleep");
   ns.disableLog("getServerUsedRam");
   ns.disableLog("scp");
+
+  const requestedPort = Number(ns.args[0]);
+  const trackingPort = Number.isInteger(requestedPort) && requestedPort >= 1 && requestedPort <= 20
+    ? requestedPort
+    : null;
+
+  // This registry intentionally lives outside the loop so state persists between iterations.
+  const trackedBatches = new Map();
 
   while (true) {
     // Discover everything and root if possible
@@ -310,6 +416,7 @@ export async function main(ns) {
     for (const w of workers) {
       ensureScripts(ns, w.name);
     }
+    reconcileBatches(ns, trackedBatches, workers);
 
     // Targets we can hack
     const viableTargets = serverObjects.filter(s =>
@@ -335,9 +442,14 @@ export async function main(ns) {
         runPrepStep(ns, target, workers);
         continue;
       }
+      // Step 4 will refill individual open slots. This gate prevents each loop from
+      // recreating a full pipeline and relying on failed exec calls for throttling.
+      if (targetHasInFlightBatch(trackedBatches, target.name)) continue;
       // Target prepped → keep batches flowing
-      fillPipeline(ns, target.name, workers, STEAL_FRAC);
+      fillPipeline(ns, target.name, workers, STEAL_FRAC, trackedBatches);
     }
+
+    publishTrackingSnapshot(ns, trackedBatches, trackingPort);
 
     await ns.sleep(250); // tight loop; we’re using delays for timing
   }
