@@ -71,6 +71,8 @@ const RED    = "\u001b[31m";
 const YELLOW = "\u001b[33m";
 const RESET  = "\u001b[0m";
 
+let idSequence = 0;
+
 /*******************************************************************************\
 |* Small utilities                                                             *|
 \*******************************************************************************/
@@ -85,6 +87,13 @@ function times(ns, target) {
     g: ns.getGrowTime(target),
     w: ns.getWeakenTime(target),
   };
+}
+
+/** Create a process-unique ID. The sequence prevents collisions within one tick. */
+function createJobId(ns, kind, targetName) {
+  idSequence += 1;
+  const safeTarget = targetName.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return `${kind}-${safeTarget}-${Date.now().toString(36)}-${ns.pid}-${idSequence}`;
 }
 
 const SCRIPT_LIST = [WEAKEN, GROW, HACK];
@@ -106,10 +115,8 @@ function freeRam(ns, host) {
   return Math.max(0, cap - s.ramUsed);
 }
 
-/** Spread threads across workers, scheduling a job to END at latestEnd.
- * args is an array of base args (we append the delay at the end).
- */
-function dispatchToEnd(ns, file, args, workers, totalThreads, actionTime, latestEnd, targetName) {
+/** Spread threads across workers, scheduling a job to END at latestEnd. */
+function dispatchToEnd(ns, file, targetName, stock, batchId, workers, totalThreads, actionTime, latestEnd) {
   if (totalThreads <= 0) return 0;
   workers = sortWorkers(workers);
   const ramPerThread = ns.getScriptRam(file, "home");
@@ -126,11 +133,11 @@ function dispatchToEnd(ns, file, args, workers, totalThreads, actionTime, latest
     const delay = Math.max(0, Math.floor(latestEnd - actionTime - Date.now()));
 
     // Modify args based on stock influence
-    let modifiedArgs = [...args];
+    let stockFlag = stock;
 
     if (file === HACK || file === GROW) {
       // Determine stock influence flag based on desired direction and action
-      let stockFlag = false; // Default: no influence on stock
+      stockFlag = false; // Default: no influence on stock
 
       if (influence === "up") {
         // Want stock to go up
@@ -140,16 +147,10 @@ function dispatchToEnd(ns, file, args, workers, totalThreads, actionTime, latest
         stockFlag = (file === HACK); // Hack decreases stock, grow increases it
       }
 
-      // Replace the stock influence flag in args (assumes it's the 2nd argument)
-      if (modifiedArgs.length > 1) {
-        modifiedArgs[1] = stockFlag;
-      } else {
-        modifiedArgs.push(stockFlag);
-      }
     }
 
-    // Launch with modified args and delay
-    const pid = ns.exec(file, w.name, useThreads, ...modifiedArgs, delay);
+    // batchId is part of the process signature, so otherwise-identical jobs can coexist.
+    const pid = ns.exec(file, w.name, useThreads, targetName, stockFlag, delay, batchId);
     if (pid !== 0) {
       remaining -= useThreads;
       if (remaining <= 0) break;
@@ -227,21 +228,23 @@ function runPrepStep(ns, target, workers) {
   const { g, w } = times(ns, name);
 
   if (s.hackDifficulty > s.minDifficulty + SECURITY_BUFFER) {
+    const prepId = createJobId(ns, "prep-weaken", name);
     const weakenNeeded = Math.ceil((s.hackDifficulty - s.minDifficulty) / 0.05);
     const end = Date.now() + w + STEP_PAD;
-    const used = dispatchToEnd(ns, WEAKEN, [name, false], workers, weakenNeeded, w, end);
+    const used = dispatchToEnd(ns, WEAKEN, name, false, prepId, workers, weakenNeeded, w, end);
     return used > 0;
   }
 
   if (s.moneyAvailable < s.moneyMax * FUNDING_THRESHOLD) {
+    const prepId = createJobId(ns, "prep-grow", name);
     // grow to max and cover security
     const growMult = Math.max(1, s.moneyMax / Math.max(1, s.moneyAvailable));
     const growT = Math.max(1, Math.ceil(ns.growthAnalyze(name, growMult)));
     const w2 = Math.ceil((growT * 0.004) / 0.05);
 
     const end = Date.now() + w + STEP_PAD;
-    const usedW = dispatchToEnd(ns, WEAKEN, [name, false], workers, w2, w, end);
-    const usedG = dispatchToEnd(ns, GROW, [name, false], workers, growT, g, end - STEP_PAD);
+    const usedW = dispatchToEnd(ns, WEAKEN, name, false, prepId, workers, w2, w, end);
+    const usedG = dispatchToEnd(ns, GROW, name, false, prepId, workers, growT, g, end - STEP_PAD);
     return (usedW + usedG) > 0;
   }
 
@@ -249,16 +252,16 @@ function runPrepStep(ns, target, workers) {
 }
 
 /** Schedule a single HWGW batch to LAND together at latestEnd (with STEP_PAD staggers) */
-function scheduleBatch(ns, targetName, workers, stealFrac, latestEnd) {
+function scheduleBatch(ns, targetName, workers, stealFrac, latestEnd, batchId) {
   const { h, g, w } = times(ns, targetName);
   const { hackT, growT, w1, w2 } = calcBatch(ns, targetName, stealFrac);
 
   // Landing order: W2 -> G -> W1 -> H
   let ok = false;
-  ok = dispatchToEnd(ns, WEAKEN, [targetName, false], workers, w2, w, latestEnd) > 0 || ok;
-  ok = dispatchToEnd(ns, GROW, [targetName, false], workers, growT, g, latestEnd - STEP_PAD, targetName) > 0 || ok;
-  ok = dispatchToEnd(ns, WEAKEN, [targetName, false], workers, w1, w, latestEnd - 2 * STEP_PAD) > 0 || ok;
-  ok = dispatchToEnd(ns, HACK, [targetName, false], workers, hackT, h, latestEnd - 3 * STEP_PAD, targetName) > 0 || ok;
+  ok = dispatchToEnd(ns, WEAKEN, targetName, false, batchId, workers, w2, w, latestEnd) > 0 || ok;
+  ok = dispatchToEnd(ns, GROW, targetName, false, batchId, workers, growT, g, latestEnd - STEP_PAD) > 0 || ok;
+  ok = dispatchToEnd(ns, WEAKEN, targetName, false, batchId, workers, w1, w, latestEnd - 2 * STEP_PAD) > 0 || ok;
+  ok = dispatchToEnd(ns, HACK, targetName, false, batchId, workers, hackT, h, latestEnd - 3 * STEP_PAD) > 0 || ok;
 
   return ok;
 }
@@ -275,7 +278,8 @@ function fillPipeline(ns, targetName, workers, stealFrac) {
   let latestEnd = Date.now() + w + 3 * STEP_PAD;
 
   for (let i = 0; i < PIPELINE; i++) {
-    const ok = scheduleBatch(ns, targetName, workers, stealFrac, latestEnd);
+    const batchId = createJobId(ns, "batch", targetName);
+    const ok = scheduleBatch(ns, targetName, workers, stealFrac, latestEnd, batchId);
     if (!ok) break;
     scheduled++;
     latestEnd += CHAIN_SPACER;
