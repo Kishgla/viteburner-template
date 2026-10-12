@@ -6,7 +6,14 @@ const TEA_COST_PER_EMPLOYEE = 500_000;
 const PARTY_COST_PER_EMPLOYEE = 500_000;
 const WAREHOUSE_PRODUCTION_RESERVE = 0.1;
 const CORPORATION_CYCLE_SECONDS = 10;
+
+// Telemetry is disabled by default. Usage:
+//   run corp-automator.js --telemetry             Write bounded telemetry while running.
+//   run corp-automator.js --reset-telemetry       Clear existing telemetry without enabling it.
+//   run corp-automator.js --telemetry --reset-telemetry
+//                                                 Clear it, then write new telemetry.
 const TELEMETRY_FILE = 'corp-telemetry.txt';
+const MAX_TELEMETRY_CHARACTERS = 1024 * 1024;
 const BOOST_MATERIALS = [
   ['Hardware', 'hardwareFactor'],
   ['Robots', 'robotFactor'],
@@ -39,8 +46,8 @@ function ensureCorporationExists(ns) {
   for (const selfFund of [false, true]) {
     if (corp.canCreateCorporation(selfFund) !== 'Success') continue;
 
-    if (corp.createCorporation('Bahl Holdings', selfFund)) {
-      ns.tprint('Created corporation "Bahl Holdings".');
+    if (corp.createCorporation('Baal Holdings', selfFund)) {
+      ns.tprint('Created corporation "Baal Holdings".');
       return true;
     }
   }
@@ -272,6 +279,36 @@ function manageProductionExports(ns) {
 }
 
 /** @param {NS} ns */
+function appendTelemetry(ns, telemetry) {
+  let newLine = `${JSON.stringify(telemetry)}\n`;
+  if (newLine.length > MAX_TELEMETRY_CHARACTERS) {
+    newLine = `${JSON.stringify({
+      timestamp: telemetry.timestamp,
+      error: 'Telemetry snapshot exceeded the file size limit.',
+    })}\n`;
+  }
+
+  const availableCharacters = MAX_TELEMETRY_CHARACTERS - newLine.length;
+  const existingLines = ns
+    .read(TELEMETRY_FILE)
+    .split('\n')
+    .filter((line) => line.length > 0);
+  const retainedLines = [];
+  let retainedCharacters = 0;
+
+  for (let index = existingLines.length - 1; index >= 0; index -= 1) {
+    const lineLength = existingLines[index].length + 1;
+    if (retainedCharacters + lineLength > availableCharacters) break;
+    retainedLines.push(existingLines[index]);
+    retainedCharacters += lineLength;
+  }
+
+  retainedLines.reverse();
+  const retainedTelemetry = retainedLines.length > 0 ? `${retainedLines.join('\n')}\n` : '';
+  ns.write(TELEMETRY_FILE, `${retainedTelemetry}${newLine}`, 'w');
+}
+
+/** @param {NS} ns */
 function writeTelemetry(ns, materialPlans) {
   const corp = ns.corporation;
   const corporation = corp.getCorporation();
@@ -338,22 +375,18 @@ function writeTelemetry(ns, materialPlans) {
     };
   });
 
-  ns.write(
-    TELEMETRY_FILE,
-    `${JSON.stringify({
-      timestamp: Date.now(),
-      corporation: {
-        funds: corporation.funds,
-        revenue: corporation.revenue,
-        expenses: corporation.expenses,
-        profit: corporation.revenue - corporation.expenses,
-        prevState: corporation.prevState,
-        nextState: corporation.nextState,
-      },
-      divisions,
-    })}\n`,
-    'a',
-  );
+  appendTelemetry(ns, {
+    timestamp: Date.now(),
+    corporation: {
+      funds: corporation.funds,
+      revenue: corporation.revenue,
+      expenses: corporation.expenses,
+      profit: corporation.revenue - corporation.expenses,
+      prevState: corporation.prevState,
+      nextState: corporation.nextState,
+    },
+    divisions,
+  });
 }
 
 /**
@@ -504,9 +537,12 @@ export async function main(ns) {
   ns.disableLog('sleep');
 
   if (!ensureCorporationExists(ns)) return;
+  const telemetryEnabled = ns.args.includes('--telemetry');
   if (ns.args.includes('--reset-telemetry')) ns.write(TELEMETRY_FILE, '', 'w');
 
-  ns.print('Employee energy and morale maintenance started.');
+  ns.print(
+    `Employee energy and morale maintenance started. Telemetry is ${telemetryEnabled ? 'enabled' : 'disabled'}.`,
+  );
   while (true) {
     maintainEmployees(ns);
     const materialPlans = new Map();
@@ -522,10 +558,12 @@ export async function main(ns) {
     } catch (error) {
       ns.print(`WARN: Could not manage production exports: ${String(error)}`);
     }
-    try {
-      writeTelemetry(ns, materialPlans);
-    } catch (error) {
-      ns.print(`WARN: Could not write corporation telemetry: ${String(error)}`);
+    if (telemetryEnabled) {
+      try {
+        writeTelemetry(ns, materialPlans);
+      } catch (error) {
+        ns.print(`WARN: Could not write corporation telemetry: ${String(error)}`);
+      }
     }
 
     // A corporation cycle is roughly ten seconds. Using a simple sleep also
