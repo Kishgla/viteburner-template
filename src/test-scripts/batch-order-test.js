@@ -1,117 +1,107 @@
-const STEP_PAD = 120;
-const STARTUP_BUFFER = 2_000;
+import { batchesForTarget, findWorkerProcesses, processKey, waitForSnapshot } from './batch-tracking-helpers.js';
+
 const POLL_INTERVAL = 5;
+const TIMING_TOLERANCE = 250;
 
 /**
- * Launches one HWGW batch on the current host and reports its landing order.
- *
- * Usage: run batch-order-test.js [target=joesguns] [stealFraction=0.01]
- *
- * @param {NS} ns - The Netscript environment.
+ * Observe the completion order of a real scheduler-created batch.
+ * Start it first with: run dynamic-hack-scheduler.js 20
+ * Usage: run test-scripts/batch-order-test.js [port=20] [target] [timeout=60000]
+ * @param {NS} ns
  */
 export async function main(ns) {
-  const host = ns.getHostname();
-  const target = String(ns.args[0] ?? 'joesguns');
-  const stealFraction = Number(ns.args[1] ?? 0.01);
-
-  if (!ns.serverExists(target) || !ns.hasRootAccess(target)) {
-    ns.tprint(`ERROR: ${target} must exist and have root access.`);
-    return;
-  }
-  if (!(stealFraction > 0 && stealFraction < 1)) {
-    ns.tprint('ERROR: stealFraction must be greater than 0 and less than 1.');
-    return;
-  }
-
-  const batch = calculateBatch(ns, target, stealFraction);
-  const jobs = [
-    { label: 'hack', file: 'hack.js', threads: batch.hackThreads, offset: -3 * STEP_PAD },
-    { label: 'weaken-hack', file: 'weaken.js', threads: batch.hackWeakenThreads, offset: -2 * STEP_PAD },
-    { label: 'grow', file: 'grow.js', threads: batch.growThreads, offset: -STEP_PAD },
-    { label: 'weaken-grow', file: 'weaken.js', threads: batch.growWeakenThreads, offset: 0 },
-  ];
-
-  for (const job of jobs) {
-    if (!ns.fileExists(job.file, host)) {
-      ns.tprint(`ERROR: ${job.file} is not present on ${host}.`);
-      return;
-    }
-  }
-
-  const requiredRam = jobs.reduce(
-    (total, job) => total + ns.getScriptRam(job.file, host) * job.threads,
-    0,
+  ns.disableLog('ALL');
+  const port = Number(ns.args[0] ?? 20);
+  const target = ns.args[1] === undefined ? null : String(ns.args[1]);
+  const timeout = Math.max(1_000, Number(ns.args[2] ?? 60_000));
+  const snapshot = await waitForSnapshot(
+    ns,
+    port,
+    (value) => Date.now() - value.timestamp <= 1_000 && batchesForTarget(value, target).length > 0,
+    timeout,
   );
-  const freeRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host);
-  if (requiredRam > freeRam) {
-    ns.tprint(
-      `ERROR: Batch needs ${ns.formatRam(requiredRam)}, but ${host} has ${ns.formatRam(
-        freeRam,
-      )} free. Try a smaller steal fraction or a larger host.`,
-    );
+  if (!snapshot) {
+    ns.tprint(`FAIL: no scheduler batch${target ? ` for ${target}` : ''} appeared on port ${port}.`);
     return;
   }
 
-  const actionTimes = {
-    hack: ns.getHackTime(target),
-    grow: ns.getGrowTime(target),
-    weaken: ns.getWeakenTime(target),
-  };
-  const finalLanding = Date.now() + Math.max(...Object.values(actionTimes)) + STARTUP_BUFFER;
-  const batchId = `batch-order-test-${Date.now()}`;
-  const running = [];
-
-  for (const job of jobs) {
-    const action = job.label === 'hack' ? 'hack' : job.label === 'grow' ? 'grow' : 'weaken';
-    const landingTime = finalLanding + job.offset;
-    const delay = Math.max(0, Math.floor(landingTime - actionTimes[action] - Date.now()));
-    const operationId = `${batchId}-${job.label}`;
-    const pid = ns.exec(job.file, host, job.threads, target, false, delay, operationId);
-
-    if (pid === 0) {
-      for (const launched of running) ns.kill(launched.pid);
-      ns.tprint(`ERROR: Failed to launch ${job.label}; killed the partial batch.`);
-      return;
-    }
-
-    running.push({ ...job, pid, expectedLanding: landingTime });
+  const live = findWorkerProcesses(ns);
+  const liveByPid = new Map(live.map((process) => [processKey(process.host, process.pid), process]));
+  const candidate = batchesForTarget(snapshot, target)
+    .map((batch) => ({ batch, groups: logicalOperations(ns, batch, liveByPid) }))
+    .find(({ groups }) => groups.length === 4
+      && groups.every((group) => group.jobs.length > 0)
+      && groups.map((group) => group.file).join(',') === 'hack.js,weaken.js,grow.js,weaken.js');
+  if (!candidate) {
+    ns.tprint('FAIL: no complete, live HWGW batch was available to observe.');
+    return;
   }
 
-  ns.tprint(`Running one batch against ${target}; expected: hack -> weaken-hack -> grow -> weaken-grow`);
+  const { batch, groups } = candidate;
+  const expectedLabels = ['hack', 'weaken-hack', 'grow', 'weaken-grow'];
+  const completions = [];
+  const deadline = Date.now() + timeout;
+  ns.tprint(`Observing ${batch.id}; expected ${expectedLabels.join(' -> ')}`);
 
-  const completionOrder = [];
-  while (completionOrder.length < running.length) {
-    for (const job of running) {
-      if (!completionOrder.includes(job) && !ns.isRunning(job.pid, host)) {
-        completionOrder.push(job);
-        const timingError = Date.now() - job.expectedLanding;
-        ns.tprint(`${job.label} landed (${formatSigned(timingError)} ms from expected)`);
+  while (completions.length < groups.length && Date.now() < deadline) {
+    const liveKeys = new Set(findWorkerProcesses(ns).map((process) => processKey(process.host, process.pid)));
+    for (const group of groups) {
+      if (completions.some((entry) => entry.key === group.key)) continue;
+      if (group.jobs.every((job) => !liveKeys.has(processKey(job.host, job.pid)))) {
+        const completedAt = Date.now();
+        completions.push({ ...group, completedAt });
+        ns.tprint(`  ${group.label} completed (${formatSigned(completedAt - group.expectedLanding)} ms from expected)`);
       }
     }
-    if (completionOrder.length < running.length) await ns.sleep(POLL_INTERVAL);
+    if (completions.length < groups.length) await ns.sleep(POLL_INTERVAL);
   }
 
-  const actual = completionOrder.map((job) => job.label);
-  const expected = jobs.map((job) => job.label);
-  const passed = actual.every((label, index) => label === expected[index]);
-  ns.tprint(`${passed ? 'PASS' : 'FAIL'}: actual order was ${actual.join(' -> ')}`);
+  const actual = completions.map((entry) => entry.label);
+  const orderCorrect = expectedLabels.every((label, index) => actual[index] === label);
+  const timingCorrect = completions.length === 4
+    && completions.every((entry) => Math.abs(entry.completedAt - entry.expectedLanding) <= TIMING_TOLERANCE);
+  ns.tprint(`${orderCorrect && timingCorrect ? 'PASS' : 'FAIL'}: actual=${actual.join(' -> ') || '<timeout>'}; timing tolerance=±${TIMING_TOLERANCE}ms.`);
 }
 
-function calculateBatch(ns, target, stealFraction) {
-  const server = ns.getServer(target);
-  const currentMoney = Math.max(1, server.moneyAvailable ?? 0);
-  const maximumMoney = Math.max(1, server.moneyMax ?? 0);
-  const stealAmount = Math.max(1, Math.floor(currentMoney * stealFraction));
-  const hackThreads = Math.max(1, Math.floor(ns.hackAnalyzeThreads(target, stealAmount)));
-  const moneyAfterHack = Math.max(1, currentMoney * (1 - ns.hackAnalyze(target) * hackThreads));
-  const growThreads = Math.max(1, Math.ceil(ns.growthAnalyze(target, maximumMoney / moneyAfterHack)));
+function logicalOperations(ns, batch, liveByPid) {
+  const createdAt = parseCreatedAt(batch.id);
+  if (createdAt === null) return [];
+  const grouped = [];
+  for (const job of batch.operations) {
+    const process = liveByPid.get(processKey(job.host, job.pid));
+    if (!process) continue;
+    const delay = Math.max(0, Number(process.args[2]) || 0);
+    const actionTime = job.file === 'hack.js'
+      ? ns.getHackTime(batch.target)
+      : job.file === 'grow.js'
+        ? ns.getGrowTime(batch.target)
+        : ns.getWeakenTime(batch.target);
+    const expectedLanding = createdAt + delay + actionTime;
+    let group = grouped.find((entry) => entry.file === job.file
+      && Math.abs(entry.expectedLanding - expectedLanding) <= 20);
+    if (!group) {
+      group = {
+        key: `${job.file}|${delay}`,
+        file: job.file,
+        jobs: [],
+        expectedLanding,
+      };
+      grouped.push(group);
+    }
+    group.jobs.push(job);
+  }
 
-  return {
-    hackThreads,
-    growThreads,
-    hackWeakenThreads: Math.max(1, Math.ceil((hackThreads * 0.002) / 0.05)),
-    growWeakenThreads: Math.max(1, Math.ceil((growThreads * 0.004) / 0.05)),
-  };
+  const ordered = grouped.sort((a, b) => a.expectedLanding - b.expectedLanding);
+  const labels = ['hack', 'weaken-hack', 'grow', 'weaken-grow'];
+  for (let index = 0; index < ordered.length; index++) ordered[index].label = labels[index] ?? ordered[index].file;
+  return ordered;
+}
+
+function parseCreatedAt(batchId) {
+  const match = batchId.match(/-([0-9a-z]+)-\d+-\d+$/);
+  if (!match) return null;
+  const value = parseInt(match[1], 36);
+  return Number.isFinite(value) ? value : null;
 }
 
 function formatSigned(value) {
