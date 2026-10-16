@@ -5,9 +5,6 @@
 .vscode/
 .obsidian/
 
-# Local project notes
-TODO.md
-
 # Distributable
 /build
 /dist/

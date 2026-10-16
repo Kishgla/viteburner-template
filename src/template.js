@@ -1,3 +1,3 @@
 export async function main(ns) {
-  ns.tprint("Testing 1234");
+  ns.tprint(`Script income: ${ns.getScriptIncome("dynamic-hack-scheduler.js")}/sec`);
 }

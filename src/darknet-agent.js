@@ -14,7 +14,7 @@ const MAP_HOST = "home";
  * Version of the darknet agent. Used to prevent multiple instances of the agent from running on the same node.
  * Increment this when deploying a new version of the agent to ensure that old instances are terminated and replaced with the new version.
  */
-const AGENT_VERSION = 1;
+const AGENT_VERSION = 0;
 
 /**
  * Reads the darknet map from the file.
@@ -91,7 +91,8 @@ export async function main(ns) {
   const hostname = ns.getHostname();
   if (hostname === "home") {
     await ns.scp(ns.getScriptName(), "darkweb");
-    ns.exec(ns.getScriptName(), "darkweb", 1, AGENT_VERSION);
+    ns.exec(ns.getScriptName(), "darkweb", { threads: 1, preventDuplicates: true }, AGENT_VERSION);
+    ns.dnet.
     return;
   }
 
@@ -158,7 +159,7 @@ export async function main(ns) {
       }
 
       // then execute it
-      const pid = ns.exec(ns.getScriptName(), neighbor, 1, AGENT_VERSION);
+      const pid = ns.exec(ns.getScriptName(), neighbor, { threads: 1, preventDuplicates: true }, AGENT_VERSION);
       if (pid === 0) {
         ns.print(`${RED}Failed to execute script on: ${neighbor}${RESET}`);
       } else {
@@ -166,10 +167,23 @@ export async function main(ns) {
       }
     }
 
+    
 
-    // check contents of current node 
-    // if it has a cache, open it
-    // if it has a note with a partial password, read it and store it
+    // process files on the current host
+    const files = ns.ls(ns.getHostname());
+    const caches = files.filter(file => file.endsWith('.cache'))[0];
+    const readableFiles = files.filter(file => 
+      file.endsWith('.txt') ||
+      file.endsWith('.lit') ||
+      file.endsWith('.msg') ||
+      file.endsWith('.json')
+    );
+    for (const  file of readableFiles) {
+      const content = ns.read(file);
+      ns.print(`${BLUE}Found readable file: ${file}: ${content}${RESET}`);
+    }
+
+
 
     ns.print(`${BLUE}Current node: ${hostname}${RESET}`);
     ns.print(`${BLUE}Sleeping for 5 seconds before next scan...${RESET}`);
