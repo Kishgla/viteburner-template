@@ -56,7 +56,7 @@ export async function main(ns) {
       : securityDelta > SECURITY_BUFFER;
 
   ns.tprint(
-    `${ready ? 'READY' : 'FAIL'}: ${target} money=${ns.formatPercent(moneyRatio, 2)} ` +
+    `${ready ? 'READY' : 'FAIL'}: ${target} money=${ns.format.percent(moneyRatio, 2)} ` +
       `security=${server.hackDifficulty.toFixed(3)} (min+${securityDelta.toFixed(3)}); ` +
       `expected prep kind=${kind}.`,
   );
@@ -87,12 +87,19 @@ async function raiseSecurity(ns, target) {
   const desired = ns.getServerMinSecurityLevel(target) + SECURITY_BUFFER + SECURITY_MARGIN;
   while (ns.getServerSecurityLevel(target) <= ns.getServerMinSecurityLevel(target) + SECURITY_BUFFER) {
     const increase = desired - ns.getServerSecurityLevel(target);
-    const threads = Math.max(1, Math.ceil(increase / ns.growthAnalyzeSecurity(1, target)));
-    await dispatchWave(ns, 'grow', target, threads);
+    const increasePerThread = ns.hackAnalyzeSecurity(1, target);
+    if (!Number.isFinite(increasePerThread) || increasePerThread <= 0) {
+      throw new Error(`Cannot calculate a positive security increase for ${target}`);
+    }
+    const threads = Math.max(1, Math.ceil(increase / increasePerThread));
+    await dispatchWave(ns, 'hack', target, threads);
   }
 }
 
 async function dispatchWave(ns, operation, target, requestedThreads) {
+  if (!Number.isSafeInteger(requestedThreads) || requestedThreads < 1) {
+    throw new Error(`Invalid ${operation} thread count: ${requestedThreads}`);
+  }
   const worker = WORKERS[operation];
   const workerRam = ns.getScriptRam(worker, 'home');
   let remaining = requestedThreads;

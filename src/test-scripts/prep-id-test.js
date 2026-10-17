@@ -15,33 +15,27 @@ export async function main(ns) {
   const expectedKind = String(ns.args[1] ?? 'either');
   const timeout = Math.max(1_000, Number(ns.args[2] ?? 60_000));
   const deadline = Date.now() + timeout;
-  let matches = [];
+  let groups = new Map();
 
   while (Date.now() < deadline) {
-    matches = findWorkerProcesses(ns).filter((process) => {
+    const matches = findWorkerProcesses(ns).filter((process) => {
       const id = String(process.args[3] ?? '');
       return id.startsWith('prep-') && (target === null || String(process.args[0]) === target);
     });
-    if (matches.length > 0) break;
+    groups = groupCompletePreps(matches, expectedKind);
+    if (groups.size > 0) break;
     await ns.sleep(50);
   }
-  if (matches.length === 0) {
-    ns.tprint(`FAIL: no prep workers${target ? ` for ${target}` : ''} appeared before timeout.`);
+  if (groups.size === 0) {
+    const expected = expectedKind === 'grow' ? 'complete grow/weaken prep pair' : `${expectedKind} prep`;
+    ns.tprint(`FAIL: no ${expected}${target ? ` for ${target}` : ''} appeared before timeout.`);
     return;
   }
 
-  const groups = new Map();
   const errors = [];
-  for (const process of matches) {
-    const id = String(process.args[3] ?? '');
+  for (const [id, entries] of groups) {
     if (!PREP_PATTERN.test(id)) errors.push(`${id}: invalid prep ID format`);
     if (NORMAL_PATTERN.test(id)) errors.push(`${id}: prep ID overlaps the normal batch namespace`);
-    const entries = groups.get(id) ?? [];
-    entries.push(process);
-    groups.set(id, entries);
-  }
-
-  for (const [id, entries] of groups) {
     const kind = id.startsWith('prep-grow-') ? 'grow' : 'weaken';
     if (expectedKind !== 'either' && kind !== expectedKind) errors.push(`${id}: expected ${expectedKind} prep`);
     const files = new Set(entries.map((entry) => entry.filename));
@@ -61,4 +55,24 @@ export async function main(ns) {
 
   for (const error of errors) ns.tprint(`  ERROR: ${error}`);
   ns.tprint(`${errors.length === 0 ? 'PASS' : 'FAIL'}: checked ${groups.size} scheduler-created prep ID(s).`);
+}
+
+function groupCompletePreps(matches, expectedKind) {
+  const groups = new Map();
+  for (const process of matches) {
+    const id = String(process.args[3] ?? '');
+    const entries = groups.get(id) ?? [];
+    entries.push(process);
+    groups.set(id, entries);
+  }
+
+  return new Map(
+    [...groups].filter(([id, entries]) => {
+      const files = new Set(entries.map((entry) => entry.filename));
+      const kind = id.startsWith('prep-grow-') ? 'grow' : 'weaken';
+      if (expectedKind !== 'either' && kind !== expectedKind) return false;
+      if (kind === 'grow') return files.has('grow.js') && files.has('weaken.js');
+      return files.has('weaken.js') && [...files].every((file) => file === 'weaken.js');
+    }),
+  );
 }
