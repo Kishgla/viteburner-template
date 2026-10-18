@@ -42,7 +42,7 @@ Testing:
 
 - [x] Start the scheduler with a tracking port, run `test-scripts/batch-id-test.js`, and verify scheduler-created batches use valid unique IDs, share one ID across every HWGW operation, and remain distinguishable on the same host. ✅ 2026-10-09
 - [x] Run `test-scripts/batch-id-test.js` with split verification enabled in a RAM-constrained setup and verify every portion of a split operation has the same batch ID and equivalent timing arguments on multiple hosts. ✅ 2026-10-09
-- [ ] Put a target into each prep state, run `test-scripts/prep-id-test.js`, and verify prep IDs use the correct namespace, are shared by grow/weaken prep pairs, and cannot be mistaken for normal batch IDs.
+- [x] Put a target into each prep state, run `test-scripts/prep-id-test.js`, and verify prep IDs use the correct namespace, are shared by grow/weaken prep pairs, and cannot be mistaken for normal batch IDs. ✅ 2026-10-17
 - [x] Re-audit the step 2 testing tasks and test scripts against the completed batch-ID implementation; update them where necessary. ✅ 2026-10-09
 
 ### 3. Track in-flight batches
@@ -156,6 +156,91 @@ Testing:
 - [ ] Confirm unknown models are recorded once and do not crash the agent.
 - [ ] Run an in-game traversal test across multiple model types.
 - [ ] Verify concurrent agents do not duplicate expensive solver attempts unnecessarily.
+
+## Matrix terminal background
+
+Scope: `src/lib/matrix-bg.js` and its `getopts` dependency.
+
+### Correctness and integration
+
+- [x] Resolve the `getops.js`/`getopts.js` filename mismatch so `matrix-bg.js` can load its parser. ✅ 2026-10-17
+- [x] Preserve `rainbow: false` during option normalization so rainbow mode is genuinely off by default. ✅ 2026-10-17
+- [x] Validate the original numeric values as finite integers instead of validating `Math.floor(value)`. ✅ 2026-10-17
+- [x] Accept every integer color offset, normalize it modulo 360, and make validation and help text agree. ✅ 2026-10-17
+- [x] Repair the mojibake by using ASCII `deg` in logs and a Unicode escape for the initial Katakana character. ✅ 2026-10-17
+- [x] Replace implicit global `sprintf` calls with template literals. ✅ 2026-10-17
+- [x] Use `tprint` for raw help and status text so literal percent signs are not parsed as `sprintf` placeholders. ✅ 2026-10-17
+- [x] Avoid Bitburner's reserved `run -t` thread flag by using `-l, --log` for the renderer log. ✅ 2026-10-17
+- [x] Make cleanup idempotent and remove only DOM elements owned by the current instance. ✅ 2026-10-17
+
+### Relaunchable singleton
+
+- [x] Implement a singleton controller that works across separate Bitburner script processes rather than relying on the module-local `running` variable. ✅ 2026-10-17
+- [x] Store ownership and live configuration in a documented shared-window registry. ✅ 2026-10-17
+- [x] Have the first instance claim ownership and continue rendering. ✅ 2026-10-17
+- [x] When the script is launched again, send the newly parsed options to the active owner and exit the new process cleanly. ✅ 2026-10-17
+- [x] Make the active owner consume configuration changes and update delay, hue, blur, opacity, random color, and rainbow behavior without recreating duplicate canvases. ✅ 2026-10-17
+- [x] Include an instance token and PID in the registry so stale state cannot impersonate a live owner. ✅ 2026-10-17
+- [x] Version the singleton protocol and automatically replace an older owner after renderer code changes. ✅ 2026-10-17
+- [x] Detect a stale owner record, clear it safely, and allow a new instance to take ownership. ✅ 2026-10-17
+- [x] Release singleton state during `ns.atExit()` without clearing ownership that belongs to a replacement instance. ✅ 2026-10-17
+- [x] Define predictable behavior for simultaneous launches so exactly one renderer remains active. ✅ 2026-10-17
+- [x] Add a `--stop` option that asks the active owner to clean up and exit without requiring a manual `kill` command. ✅ 2026-10-17
+
+### Rendering and UI resilience
+
+- [x] Give every rain drop an independent hue selected from a range around the configured base hue. ✅ 2026-10-17
+- [x] Move rainbow color cycling from a canvas-wide CSS filter into per-drop rendering while retaining each drop's independent color phase. ✅ 2026-10-17
+- [x] Add a live-configurable `--spread` option from 0-360 degrees, including a zero-width single-color mode. ✅ 2026-10-17
+- [x] Establish an isolated stacking context and transparent terminal layer so the canvas renders behind terminal content. ✅ 2026-10-17
+- [x] Size the canvas from the current terminal container instead of `window.screen`. ✅ 2026-10-17
+- [x] Recalculate canvas dimensions and column count when the window or terminal layout changes. ✅ 2026-10-17
+- [x] Replace the fixed 256-column count and hard-coded vertical reset value with values derived from canvas dimensions and character size. ✅ 2026-10-17
+- [x] Preserve blur while rainbow hue animation is active. ✅ 2026-10-17
+- [x] Set an explicit font, font size, text baseline, and device-pixel-ratio strategy for consistent rendering. ✅ 2026-10-17
+- [x] Pause or reduce drawing work while the terminal is hidden, and resume when it becomes visible. ✅ 2026-10-17
+- [x] Handle a missing or replaced terminal DOM node without leaving a stale canvas behind. ✅ 2026-10-17
+- [x] Restore any terminal attributes or styles changed by the script during cleanup. ✅ 2026-10-17
+
+### Maintainability and user experience
+
+- [x] Separate option parsing, validation, rendering, DOM lifecycle, and singleton messaging into focused functions. ✅ 2026-10-17
+- [x] Derive aliases, defaults, and parser types from one option-definition source. ✅ 2026-10-17
+- [x] Document that direct DOM access depends on Bitburner UI internals and may require maintenance after game updates. ✅ 2026-10-17
+- [x] Add concise startup, live-reconfiguration, stop, and recovery messages without logging every animation frame. ✅ 2026-10-17
+- [x] Document example commands for default, fixed-color, random-color, rainbow, reconfiguration, and stop behavior in `--help`. ✅ 2026-10-17
+
+Testing:
+
+- [x] Run lint and syntax checks on `matrix-bg.js` and `getops.js`. ✅ 2026-10-17
+- [x] Run `--help`; verify every short and long option, accepted range, default, example, and terminal-DOM warning is accurate. ✅ 2026-10-17
+- [x] Run with `-l` and `--log`; verify Bitburner accepts both forms and opens the persistent owner's log without creating another renderer. ✅ 2026-10-17
+- [x] Launch with no arguments; verify the canvas is behind the terminal, the log reports rainbow off, and the default values are delay 33, hue 0, opacity 25, blur 0, and spread 0. ✅ 2026-10-17
+- [x] Test `-b N` and `--blur N`; verify both apply the same blur value. ✅ 2026-10-17
+- [x] Test `-c DEG` and `--color DEG`; verify both apply the same hue offset. ✅ 2026-10-17
+- [x] Test `-d MS` and `--delay MS`; verify both apply the same frame delay. ✅ 2026-10-17
+- [x] Test `-o PCT` and `--opacity PCT`; verify both apply the same opacity. ✅ 2026-10-17
+- [x] Test `-R SEC` and `--rainbow SEC`; verify both apply the same rainbow duration. ✅ 2026-10-17
+- [x] Test `-S DEG` and `--spread DEG`; verify both apply the same color range. ✅ 2026-10-17
+- [x] Test `--rainbow` with no duration and verify it uses 10 seconds; then test explicit durations of 1 and 100 seconds. ✅ 2026-10-17
+- [x] Verify invalid numeric input is rejected: empty values, decimals, `NaN`, `Infinity`, booleans, and values just outside each documented range. ✅ 2026-10-17
+- [x] Verify negative and greater-than-359 color offsets wrap correctly, including `--color -120`, `--color 360`, and `--color 480`. ✅ 2026-10-17
+- [x] Verify unexpected positional arguments and unknown flags print a useful error and help text without creating a canvas. ✅ 2026-10-17
+- [x] Verify `--random` selects a valid hue and overrides an accompanying `--color` value. ✅ 2026-10-17
+- [x] Verify simultaneous drops use visibly different hues and a respawned drop receives a new hue. ✅ 2026-10-17
+- [x] Compare `--spread 0`, `--spread 60`, `--spread 120`, and `--spread 360`; verify zero is single-color and larger values increase variety. ✅ 2026-10-17
+- [x] Run with `--rainbow 10`; verify drops retain separate color phases, complete a cycle in about ten seconds, and preserve the configured blur. ✅ 2026-10-17
+- [x] Relaunch with different color, spread, delay, opacity, blur, and rainbow values; verify the original PID applies all changes without adding another persistent process, canvas, or stylesheet. ✅ 2026-10-17
+- [x] Launch multiple configurations nearly simultaneously; verify exactly one renderer owns the shared registry and remains active. ✅ 2026-10-17
+- [x] Start an older protocol version or inject stale ownership state, then relaunch and verify the incompatible or stale owner is replaced safely. ✅ 2026-10-17
+- [x] Use `--stop`; verify the owner exits and removes its canvas, stylesheet, container marker, observer, and shared registry state. ✅ 2026-10-17
+- [x] Resize the game window horizontally and vertically; verify canvas pixels remain sharp, dimensions track the terminal, and columns are added or removed without gaps. ✅ 2026-10-17
+- [x] Change browser zoom or move between displays with different scaling; verify device-pixel-ratio resizing keeps text sharp and correctly sized. ✅ 2026-10-17
+- [x] Navigate away from the terminal; verify drawing pauses and its canvas detaches, then return and verify a single correctly sized canvas reattaches and rendering resumes. ✅ 2026-10-17
+- [x] Leave the browser tab hidden for at least one minute; verify animation work remains paused and resumes without a burst or duplicated renderer. ✅ 2026-10-17
+- [x] Test normal `--stop`, manual PID kill, script error, stale-owner recovery, and terminal DOM replacement; verify each path leaves no unintended DOM markers or elements. ✅ 2026-10-17
+- [x] Run a 30-minute soak test while resizing, navigating, and live-reconfiguring; verify bounded memory usage, one owner, one canvas, and no repeated log noise. ✅ 2026-10-17
+- [x] Smoke-test against the current Bitburner release and record the terminal selector and wrapper hierarchy observed during the test. ✅ 2026-10-17
 
 ## General script review
 
