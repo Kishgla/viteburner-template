@@ -55,23 +55,26 @@ Testing:
 
 Testing:
 
-- [ ] Validate each tracked batch's ID, target, expected landing time, and operation metadata against `ns.ps()`.
-- [ ] Let a batch finish and verify its record is removed within a one-second reconciliation window.
-- [ ] Kill one process from a multi-process batch and verify the stale PID is removed while live siblings remain tracked.
-- [ ] Restart the scheduler while workers are active and verify their batch records are reconstructed before new work is dispatched for those targets.
-- [ ] Run a multi-target soak test and confirm tracking stays bounded without appending another full pipeline while prior batches remain active.
+- [x] Validate each tracked batch's ID, target, expected landing time, and operation metadata against `ns.ps()`. ✅ 2026-10-17
+- [x] Let a batch finish and verify its record is removed within a one-second reconciliation window. ✅ 2026-10-17
+- [x] Kill one process from a multi-process batch and verify the stale PID is removed while live siblings remain tracked. ✅ 2026-10-17
+- [x] Restart the scheduler while workers are active and verify their batch records are reconstructed before new work is dispatched for those targets. ✅ 2026-10-17
+- [x] Run a multi-target soak test and confirm tracking stays bounded without appending another full pipeline while prior batches remain active. ✅ 2026-10-17
 
 ### 4. Enforce the pipeline limit
 
-- [ ] Count active batches separately for each target.
-- [ ] Schedule only enough batches to reach `PIPELINE`.
-- [ ] Maintain a persistent next-landing timestamp for each target.
-- [ ] Preserve `CHAIN_SPACER` between consecutive batch landings.
-- [ ] Prevent every scheduler loop from recreating a complete pipeline.
+- [x] Count active batches separately for each target.
+- [x] Schedule only enough batches to reach `PIPELINE`.
+- [x] Maintain a persistent next-landing timestamp for each target.
+- [x] Preserve `CHAIN_SPACER` between consecutive batch landings.
+- [x] Prevent every scheduler loop from recreating a complete pipeline.
 
 Testing:
 
-- [ ] After the step 4 implementation is complete, audit the finished behavior and generate the testing tasks and test scripts needed to validate it.
+- [x] After the step 4 implementation is complete, audit the finished behavior and generate the testing tasks and test scripts needed to validate it. ✅ 2026-10-17
+- [ ] Run `test-scripts/pipeline-limit-test.js` and verify one target reaches but never exceeds `PIPELINE`, refills while older batch IDs remain active, and maintains at least `CHAIN_SPACER` between tracked landing times.
+- [ ] Run `test-scripts/batch-tracking-soak-test.js` for at least five minutes with multiple viable targets and verify every target remains bounded while incremental refills occur.
+- [ ] Restart the scheduler with active batches, then rerun `test-scripts/pipeline-limit-test.js` and verify recovered landing times seed a correctly spaced refill without exceeding `PIPELINE`.
 
 ### 5. Make batch dispatch atomic
 
@@ -199,8 +202,11 @@ Scope: `src/lib/matrix-bg.js` and its `getopts` dependency.
 - [x] Preserve blur while rainbow hue animation is active. ✅ 2026-10-17
 - [x] Set an explicit font, font size, text baseline, and device-pixel-ratio strategy for consistent rendering. ✅ 2026-10-17
 - [x] Pause or reduce drawing work while the terminal is hidden, and resume when it becomes visible. ✅ 2026-10-17
+- [x] Add `--no-pause` to keep the canvas mounted and drawing when the browser tab is hidden or navigation removes the terminal node. ✅ 2026-10-18
+- [x] Add `-i`/`--init-color` so the first drop in each newly created column uses a fixed hue before reverting to normal color behavior on reset. ✅ 2026-10-18
 - [x] Handle a missing or replaced terminal DOM node without leaving a stale canvas behind. ✅ 2026-10-17
 - [x] Restore any terminal attributes or styles changed by the script during cleanup. ✅ 2026-10-17
+- [x] Observe new terminal output and assign status colors to drops born during `ERROR:`, `FAIL:`, `WARN:`, `WARNING:`, and `INFO:` windows, retaining each color until that drop resets. ✅ 2026-10-18
 
 ### Maintainability and user experience
 
@@ -222,6 +228,7 @@ Testing:
 - [x] Test `-o PCT` and `--opacity PCT`; verify both apply the same opacity. ✅ 2026-10-17
 - [x] Test `-R SEC` and `--rainbow SEC`; verify both apply the same rainbow duration. ✅ 2026-10-17
 - [x] Test `-S DEG` and `--spread DEG`; verify both apply the same color range. ✅ 2026-10-17
+- [ ] Test `-i DEG` and `--init-color DEG`; verify both give every newly created column the same first-drop hue.
 - [x] Test `--rainbow` with no duration and verify it uses 10 seconds; then test explicit durations of 1 and 100 seconds. ✅ 2026-10-17
 - [x] Verify invalid numeric input is rejected: empty values, decimals, `NaN`, `Infinity`, booleans, and values just outside each documented range. ✅ 2026-10-17
 - [x] Verify negative and greater-than-359 color offsets wrap correctly, including `--color -120`, `--color 360`, and `--color 480`. ✅ 2026-10-17
@@ -238,9 +245,22 @@ Testing:
 - [x] Change browser zoom or move between displays with different scaling; verify device-pixel-ratio resizing keeps text sharp and correctly sized. ✅ 2026-10-17
 - [x] Navigate away from the terminal; verify drawing pauses and its canvas detaches, then return and verify a single correctly sized canvas reattaches and rendering resumes. ✅ 2026-10-17
 - [x] Leave the browser tab hidden for at least one minute; verify animation work remains paused and resumes without a burst or duplicated renderer. ✅ 2026-10-17
+- [ ] Relaunch with `--no-pause`, visit several non-terminal menus, hide and restore the browser tab, and verify the canvas remains mounted and rendering advances continuously without creating another renderer.
+- [ ] Relaunch without `--no-pause`, hide and restore the browser tab, and verify the default pause behavior still works.
 - [x] Test normal `--stop`, manual PID kill, script error, stale-owner recovery, and terminal DOM replacement; verify each path leaves no unintended DOM markers or elements. ✅ 2026-10-17
 - [x] Run a 30-minute soak test while resizing, navigating, and live-reconfiguring; verify bounded memory usage, one owner, one canvas, and no repeated log noise. ✅ 2026-10-17
 - [x] Smoke-test against the current Bitburner release and record the terminal selector and wrapper hierarchy observed during the test. ✅ 2026-10-17
+- [ ] Display an `INFO:` terminal message; verify only drops born during the response window become blue and retain blue until they reset.
+- [ ] Display a `WARN:` terminal message; verify only drops born during the response window become yellow and retain yellow until they reset.
+- [ ] Display a `WARNING:` terminal message; verify it behaves identically to `WARN:`.
+- [ ] Display an `ERROR:` terminal message; verify only drops born during the response window become red and retain red until they reset.
+- [ ] Display a `FAIL:` terminal message; verify it behaves identically to `ERROR:`.
+- [ ] Display INFO, WARN, and ERROR messages in quick succession; verify the highest active severity wins and lower-severity output does not interrupt it.
+- [ ] Enable rainbow mode, trigger each status type, and verify status-colored drops remain fixed at their assigned hue until reset while ordinary drops continue cycling.
+- [ ] Navigate away from and back to the terminal after a status flash; verify the output observer reconnects once without replaying old messages.
+- [ ] Relaunch or reattach with `--init-color 240`; verify the initial sweep is red and each column switches to the configured palette only after its first reset.
+- [ ] Combine `--init-color`, `--spread`, and `--rainbow`; verify initial drops stay fixed until reset and later drops follow spread and rainbow settings.
+- [ ] Trigger a status message while columns are being created; verify the status hue takes priority over `--init-color` for those columns.
 
 ## General script review
 

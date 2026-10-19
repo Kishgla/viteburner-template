@@ -1,4 +1,4 @@
-import { batchesForTarget, waitForSnapshot } from './batch-tracking-helpers.js';
+import { batchesForTarget, findWorkerProcesses, processKey, waitForSnapshot } from './batch-tracking-helpers.js';
 
 /**
  * Verify that a tracked batch record disappears after all of its workers finish.
@@ -19,6 +19,22 @@ export async function main(ns) {
   }
 
   const batch = batchesForTarget(first, target)[0];
+  const trackedKeys = new Set(batch.operations.map((operation) => processKey(operation.host, operation.pid)));
+  let workersFinishedAt = null;
+  const finishDeadline = Date.now() + timeout;
+  while (Date.now() < finishDeadline) {
+    const liveKeys = new Set(findWorkerProcesses(ns).map((process) => processKey(process.host, process.pid)));
+    if (![...trackedKeys].some((key) => liveKeys.has(key))) {
+      workersFinishedAt = Date.now();
+      break;
+    }
+    await ns.sleep(25);
+  }
+  if (workersFinishedAt === null) {
+    ns.tprint(`FAIL: ${batch.id} still had live workers after the timeout.`);
+    return;
+  }
+
   const removed = await waitForSnapshot(
     ns,
     port,
@@ -30,9 +46,11 @@ export async function main(ns) {
     return;
   }
 
-  const removalLag = removed.timestamp - batch.expectedLanding;
+  const removalLag = removed.timestamp - workersFinishedAt;
   const prompt = removalLag <= maxLag;
   ns.tprint(
-    `${prompt ? 'PASS' : 'FAIL'}: ${batch.id} was removed ${removalLag}ms after its expected landing (limit ${maxLag}ms).`,
+    `${prompt ? 'PASS' : 'FAIL'}: ${
+      batch.id
+    } was removed ${removalLag}ms after its last tracked worker exited (limit ${maxLag}ms).`,
   );
 }

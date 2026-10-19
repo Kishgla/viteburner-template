@@ -7,14 +7,24 @@ const CELL_HEIGHT = 16;
 const FONT_SIZE = 14;
 const DEFAULT_COLOR_SPREAD = 0;
 const SINGLETON_KEY = '__viteburnerMatrixBackground';
-const SINGLETON_VERSION = 3;
+const SINGLETON_VERSION = 7;
+
+const STATUS_FLASHES = {
+  ERROR: { duration: 6000, hue: 0, priority: 3 },
+  FAIL: { duration: 6000, hue: 0, priority: 3 },
+  WARN: { duration: 4800, hue: 60, priority: 2 },
+  WARNING: { duration: 4800, hue: 60, priority: 2 },
+  INFO: { duration: 3600, hue: 210, priority: 1 },
+};
 
 const OPTION_DEFINITIONS = {
   blur: { alias: 'b', type: 'string', default: 0, min: 0, max: 10 },
   color: { alias: 'c', type: 'string', default: 0 },
   delay: { alias: 'd', type: 'string', default: 33, min: 1, max: 10000 },
   help: { alias: 'h', type: 'boolean', default: false },
+  'init-color': { alias: 'i', type: 'string', default: false },
   opacity: { alias: 'o', type: 'string', default: 25, min: 0, max: 100 },
+  pause: { type: 'boolean', default: true },
   rainbow: { alias: 'R', type: 'string', default: false, min: 1, max: 100, optionalValue: 10 },
   random: { alias: 'r', type: 'boolean', default: false },
   spread: { alias: 'S', type: 'string', default: DEFAULT_COLOR_SPREAD, min: 0, max: 360 },
@@ -68,7 +78,7 @@ export async function main(ns) {
   }
 
   if (!findTerminalHost(doc)) {
-    ns.tail();
+    ns.ui.openTail();
     fail(ns, 'the terminal must be visible for the initial launch.');
   }
 
@@ -118,7 +128,10 @@ export async function main(ns) {
       wasAttached = true;
     }
 
-    if (doc.hidden || renderer.terminal.getClientRects().length === 0) {
+    if (
+      activeOpts.pauseHidden &&
+      (doc.hidden || !renderer.terminal || renderer.terminal.getClientRects().length === 0)
+    ) {
       await ns.sleep(250);
       continue;
     }
@@ -141,6 +154,12 @@ function parseOptions(ns) {
     opts[name] = parseInteger(ns, name, opts[name], OPTION_DEFINITIONS[name]);
   }
 
+  if (opts['init-color'] !== false) {
+    opts['init-color'] = normalizeHue(
+      parseInteger(ns, 'init-color', opts['init-color'], OPTION_DEFINITIONS['init-color']),
+    );
+  }
+
   if (opts.rainbow === '') {
     opts.rainbow = OPTION_DEFINITIONS.rainbow.optionalValue;
   } else if (opts.rainbow !== false) {
@@ -155,7 +174,7 @@ function parseOptions(ns) {
 
 /** Preserve negative numeric values that getopts would otherwise treat as flags. */
 function normalizeNegativeValueArgs(args) {
-  const numericOptionNames = ['blur', 'color', 'delay', 'opacity', 'rainbow', 'spread'];
+  const numericOptionNames = ['blur', 'color', 'delay', 'init-color', 'opacity', 'rainbow', 'spread'];
   const aliases = new Map(numericOptionNames.map((name) => [`-${OPTION_DEFINITIONS[name].alias}`, name]));
   const normalized = [];
 
@@ -210,7 +229,7 @@ function getoptsConfiguration(ns) {
   for (const [name, definition] of Object.entries(OPTION_DEFINITIONS)) {
     config[definition.type].push(name);
     config.default[name] = definition.default;
-    config.alias[name] = [definition.alias];
+    if (definition.alias) config.alias[name] = [definition.alias];
   }
   return config;
 }
@@ -231,7 +250,9 @@ function runtimeOptions(opts) {
     blur: opts.blur,
     color: opts.color,
     delay: opts.delay,
+    initialColor: opts['init-color'],
     opacity: opts.opacity,
+    pauseHidden: opts.pause,
     rainbow: opts.rainbow,
     spread: opts.spread,
   };
@@ -258,8 +279,11 @@ function createRenderer(doc, win, token, opts) {
     observer: undefined,
     resetHeights: [],
     resizeRequested: true,
+    statusLocked: [],
+    statusFlash: undefined,
     style,
     terminal: undefined,
+    terminalObserver: undefined,
     token,
     width: 0,
     win,
@@ -278,6 +302,10 @@ function findTerminalHost(doc) {
 function attachToCurrentTerminal(renderer, opts) {
   const host = findTerminalHost(renderer.doc);
   if (!host) {
+    if (!opts.pauseHidden && renderer.canvas?.isConnected && renderer.container?.isConnected) {
+      renderer.terminal = undefined;
+      return true;
+    }
     detachCanvas(renderer);
     return false;
   }
@@ -302,6 +330,7 @@ function attachToCurrentTerminal(renderer, opts) {
   renderer.chars = [];
   renderer.hues = [];
   renderer.resetHeights = [];
+  renderer.statusLocked = [];
   renderer.resizeRequested = true;
 
   if (typeof renderer.win.ResizeObserver === 'function') {
@@ -309,6 +338,17 @@ function attachToCurrentTerminal(renderer, opts) {
       renderer.resizeRequested = true;
     });
     renderer.observer.observe(host.container);
+  }
+
+  if (typeof renderer.win.MutationObserver === 'function') {
+    renderer.terminalObserver = new renderer.win.MutationObserver((records) => {
+      observeTerminalMessages(renderer, records);
+    });
+    renderer.terminalObserver.observe(host.terminal, {
+      characterData: true,
+      childList: true,
+      subtree: true,
+    });
   }
 
   syncCanvasSize(renderer, opts);
@@ -351,12 +391,16 @@ function reconcileColumns(renderer, opts) {
   renderer.chars.length = renderer.columns.length;
   renderer.hues.length = renderer.columns.length;
   renderer.resetHeights.length = renderer.columns.length;
+  renderer.statusLocked.length = renderer.columns.length;
 
   while (renderer.columns.length < targetCount) {
+    const statusHue = activeStatusHue(renderer);
+    const initialHue = opts.initialColor === false ? undefined : dropHue(opts.initialColor, 0);
     renderer.columns.push(0);
     renderer.chars.push('\u30a0');
-    renderer.hues.push(dropHue(opts.color, opts.spread));
+    renderer.hues.push(statusHue ?? initialHue ?? dropHue(opts.color, opts.spread));
     renderer.resetHeights.push(nextResetHeight(renderer.height));
+    renderer.statusLocked.push(statusHue !== undefined || initialHue !== undefined);
   }
 }
 
@@ -372,7 +416,9 @@ function drawFrame(renderer, opts, rainbowStartedAt) {
   for (let index = 0; index < renderer.columns.length; index++) {
     const x = index * CELL_WIDTH;
     const y = renderer.columns[index];
-    const hue = normalizeHue(renderer.hues[index] + rainbowOffset);
+    const hue = renderer.statusLocked[index]
+      ? renderer.hues[index]
+      : normalizeHue(renderer.hues[index] + rainbowOffset);
 
     ctx.fillStyle = ctx.shadowColor = '#000';
     ctx.fillRect(x, y - CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT);
@@ -380,9 +426,11 @@ function drawFrame(renderer, opts, rainbowStartedAt) {
     ctx.fillText(renderer.chars[index], x, y - CELL_HEIGHT);
 
     if (y > renderer.resetHeights[index]) {
+      const statusHue = activeStatusHue(renderer);
       renderer.columns[index] = 0;
-      renderer.hues[index] = dropHue(opts.color, opts.spread);
+      renderer.hues[index] = statusHue ?? dropHue(opts.color, opts.spread);
       renderer.resetHeights[index] = nextResetHeight(renderer.height);
+      renderer.statusLocked[index] = statusHue !== undefined;
     } else {
       renderer.columns[index] = y + CELL_HEIGHT;
     }
@@ -393,6 +441,40 @@ function drawFrame(renderer, opts, rainbowStartedAt) {
   }
 }
 
+/** Detect newly rendered terminal status prefixes without rereading history. */
+function observeTerminalMessages(renderer, records) {
+  let detected;
+
+  for (const record of records) {
+    const nodes = record.type === 'characterData' ? [record.target] : [...record.addedNodes];
+    for (const node of nodes) {
+      const text = node.textContent ?? '';
+      for (const name of Object.keys(STATUS_FLASHES)) {
+        if (new RegExp(`(?:^|\\s)${name}:`).test(text)) {
+          const candidate = STATUS_FLASHES[name];
+          if (!detected || candidate.priority > detected.priority) detected = candidate;
+        }
+      }
+    }
+  }
+
+  if (!detected) return;
+  const now = Date.now();
+  const current = renderer.statusFlash;
+  if (current && current.until > now && current.priority > detected.priority) return;
+  renderer.statusFlash = { ...detected, until: now + detected.duration };
+}
+
+/** Return the hue assigned to drops born during the status window. */
+function activeStatusHue(renderer) {
+  if (!renderer.statusFlash) return undefined;
+  if (renderer.statusFlash.until <= Date.now()) {
+    renderer.statusFlash = undefined;
+    return undefined;
+  }
+  return renderer.statusFlash.hue;
+}
+
 function nextResetHeight(canvasHeight) {
   return canvasHeight + Math.random() * Math.max(canvasHeight * 4, CELL_HEIGHT);
 }
@@ -400,6 +482,7 @@ function nextResetHeight(canvasHeight) {
 /** Reassign every stream within the currently configured color range. */
 function recolorDrops(renderer, opts) {
   for (let index = 0; index < renderer.hues.length; index++) {
+    if (renderer.statusLocked[index]) continue;
     renderer.hues[index] = dropHue(opts.color, opts.spread);
   }
 }
@@ -417,6 +500,9 @@ function normalizeHue(hue) {
 function detachCanvas(renderer) {
   renderer.observer?.disconnect();
   renderer.observer = undefined;
+  renderer.terminalObserver?.disconnect();
+  renderer.terminalObserver = undefined;
+  renderer.statusFlash = undefined;
   renderer.canvas?.remove();
 
   if (renderer.container?.dataset.matrixBackground === renderer.token) {
@@ -484,6 +570,7 @@ function printOptions(ns, opts, message) {
   ns.print(`INFO:  Delay: ${opts.delay}ms  Hue: ${opts.color}deg  Opacity: ${opts.opacity}%`);
   ns.print(`INFO:  Blur: ${opts.blur}px   Rainbow: ${opts.rainbow === false ? 'Off' : `${opts.rainbow}s`}`);
   ns.print(`INFO:  Color spread: ${opts.spread}deg`);
+  ns.print(`INFO:  Initial color: ${opts.initialColor === false ? 'Configured palette' : `${opts.initialColor}deg`}`);
 }
 
 function fail(ns, message) {
@@ -501,7 +588,9 @@ function showHelp(ns) {
       '  -b, --blur N         Blur in pixels from 0 to 10. (default: 0)',
       '  -c, --color DEG      Integer hue offset from green; values wrap modulo 360.',
       '  -d, --delay MS       Frame delay from 1 to 10000ms. (default: 33)',
+      "  -i, --init-color DEG Fixed hue offset for each column's first drop.",
       '  -o, --opacity PCT    Opacity from 0 to 100%. (default: 25)',
+      '      --no-pause       Continue drawing when the tab or terminal is hidden.',
       '  -R, --rainbow [SEC]  Cycle colors in 1-100 seconds. (default: Off|10)',
       '  -S, --spread DEG     Per-drop color range from 0 to 360deg. (default: 0)',
       '',
@@ -514,7 +603,9 @@ function showHelp(ns) {
       `  run ${ns.getScriptName()}`,
       `  run ${ns.getScriptName()} --color 120 --spread 0`,
       `  run ${ns.getScriptName()} --random --spread 60`,
+      `  run ${ns.getScriptName()} --init-color 240`,
       `  run ${ns.getScriptName()} --rainbow 10 --opacity 40`,
+      `  run ${ns.getScriptName()} --no-pause`,
       `  run ${ns.getScriptName()} --color 240 --delay 20`,
       `  run ${ns.getScriptName()} --stop`,
       '',

@@ -22,7 +22,7 @@ export async function main(ns) {
   while (Date.now() < deadline) {
     const snapshot = readSnapshot(ns, port);
     if (snapshot && Date.now() - snapshot.timestamp <= 1_000) {
-      comparison = compare(snapshot, target, findWorkerProcesses(ns));
+      comparison = compare(ns, snapshot, target, findWorkerProcesses(ns));
       if (comparison.valid) break;
     }
     await ns.sleep(100);
@@ -33,40 +33,74 @@ export async function main(ns) {
   }
 
   ns.tprint(
-    `Snapshot age=${Date.now() - comparison.snapshot.timestamp}ms batches=${comparison.batches.length} trackedPids=${comparison.jobs.length}`,
+    `Snapshot age=${Date.now() - comparison.snapshot.timestamp}ms batches=${comparison.batches.length} trackedPids=${
+      comparison.jobs.length
+    }`,
   );
   for (const batch of comparison.batches) {
     ns.tprint(
-      `  ${batch.id} target=${batch.target} landing=${new Date(batch.expectedLanding).toLocaleTimeString()} jobs=${batch.operations.length}`,
+      `  ${batch.id} target=${batch.target} landing=${new Date(batch.expectedLanding).toLocaleTimeString()} jobs=${
+        batch.operations.length
+      }`,
     );
   }
   ns.tprint(
-    `${comparison.valid ? 'PASS' : 'FAIL'}: metadataErrors=${comparison.metadataErrors}, missing=${comparison.missing}, untracked=${comparison.untracked}`,
+    `${comparison.valid ? 'PASS' : 'FAIL'}: metadataErrors=${comparison.metadataErrors}, landingErrors=${
+      comparison.landingErrors
+    }, verifiedLandings=${comparison.verifiedLandings}, retiredSinceSnapshot=${comparison.missing}, untracked=${
+      comparison.untracked
+    }`,
   );
 }
 
-function compare(snapshot, target, live) {
+function compare(ns, snapshot, target, live) {
   const batches = batchesForTarget(snapshot, target);
   const jobs = trackedJobs({ batches });
   const liveByPid = new Map(live.map((process) => [processKey(process.host, process.pid), process]));
   const trackedKeys = new Set(jobs.map((job) => processKey(job.host, job.pid)));
   let metadataErrors = 0;
+  let landingErrors = 0;
+  let verifiedLandings = 0;
   let missing = 0;
 
   for (const batch of batches) {
     if (!batch.id || !batch.target || !Number.isFinite(batch.expectedLanding)) metadataErrors += 1;
+    const calculatedLandings = [];
+    let batchMissing = false;
     for (const job of batch.operations) {
       const process = liveByPid.get(processKey(job.host, job.pid));
       if (!process) {
         missing += 1;
+        batchMissing = true;
         continue;
       }
       if (
-        process.filename !== job.file
-        || process.threads !== job.threads
-        || String(process.args[0]) !== batch.target
-        || String(process.args[3]) !== batch.id
-      ) metadataErrors += 1;
+        process.filename !== job.file ||
+        process.threads !== job.threads ||
+        String(process.args[0]) !== batch.target ||
+        String(process.args[3]) !== batch.id
+      )
+        metadataErrors += 1;
+
+      const createdAt = parseCreatedAt(batch.id);
+      const delay = Number(process.args[2]);
+      const actionTime =
+        process.filename === 'hack.js'
+          ? ns.getHackTime(batch.target)
+          : process.filename === 'grow.js'
+          ? ns.getGrowTime(batch.target)
+          : ns.getWeakenTime(batch.target);
+      if (createdAt === null || !Number.isFinite(delay)) {
+        landingErrors += 1;
+      } else {
+        calculatedLandings.push(createdAt + Math.max(0, delay) + actionTime);
+      }
+    }
+    // Only reconstruct the batch landing while every process from the snapshot is
+    // still available. A worker may legitimately finish between peek() and ps().
+    if (!batchMissing && calculatedLandings.length > 0) {
+      verifiedLandings += 1;
+      if (Math.abs(batch.expectedLanding - Math.max(...calculatedLandings)) > 250) landingErrors += 1;
     }
   }
 
@@ -80,8 +114,17 @@ function compare(snapshot, target, live) {
     batches,
     jobs,
     metadataErrors,
+    landingErrors,
+    verifiedLandings,
     missing,
     untracked,
-    valid: jobs.length > 0 && metadataErrors === 0 && missing === 0 && untracked === 0,
+    valid: jobs.length > 0 && metadataErrors === 0 && landingErrors === 0 && verifiedLandings > 0 && untracked === 0,
   };
+}
+
+function parseCreatedAt(batchId) {
+  const match = batchId.match(/-([0-9a-z]+)-\d+-\d+$/);
+  if (!match) return null;
+  const value = parseInt(match[1], 36);
+  return Number.isFinite(value) ? value : null;
 }

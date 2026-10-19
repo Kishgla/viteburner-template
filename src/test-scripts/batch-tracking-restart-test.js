@@ -21,9 +21,8 @@ export async function main(ns) {
   const before = await waitForSnapshot(
     ns,
     port,
-    (snapshot) => snapshot.batches.some(
-      (batch) => batch.operations.length > 0 && batch.expectedLanding > Date.now() + 1_000,
-    ),
+    (snapshot) =>
+      snapshot.batches.some((batch) => batch.operations.length > 0 && batch.expectedLanding > Date.now() + 1_000),
     timeout,
   );
   if (!before) {
@@ -69,8 +68,9 @@ export async function main(ns) {
   const recovered = await waitForSnapshot(
     ns,
     port,
-    (snapshot) => snapshot.schedulerPid === replacementPid
-      && snapshot.batches.some((batch) => expectedIds.has(batch.id) && batch.recovered),
+    (snapshot) =>
+      snapshot.schedulerPid === replacementPid &&
+      snapshot.batches.some((batch) => expectedIds.has(batch.id) && batch.recovered),
     timeout,
   );
   const recoveredTargets = new Set(
@@ -78,11 +78,17 @@ export async function main(ns) {
       .filter((batch) => expectedIds.has(batch.id) && batch.recovered)
       .map((batch) => batch.target),
   );
+  const recoveredIds = new Set((recovered?.batches ?? []).filter((batch) => batch.recovered).map((batch) => batch.id));
+  const recoveredAll = [...expectedIds].every((id) => recoveredIds.has(id));
   const prematureNewWork = (recovered?.batches ?? []).some(
     (batch) => recoveredTargets.has(batch.target) && !expectedIds.has(batch.id),
   );
-  const passed = recovered !== null && !prematureNewWork;
+  const passed = recovered !== null && recoveredAll && !prematureNewWork;
   ns.tprint(
-    `${passed ? 'PASS' : 'FAIL'}: scheduler pid=${replacementPid} ${recovered ? 'recovered existing work' : 'did not report recovery before timeout'}${prematureNewWork ? ' but also dispatched new work for a recovering target' : ''}.`,
+    `${passed ? 'PASS' : 'FAIL'}: scheduler pid=${replacementPid} ${
+      recoveredAll
+        ? `recovered all ${expectedIds.size} existing batch(es)`
+        : `recovered ${recoveredIds.size}/${expectedIds.size} existing batch(es)`
+    }${prematureNewWork ? ' but also dispatched new work for a recovering target' : ''}.`,
   );
 }

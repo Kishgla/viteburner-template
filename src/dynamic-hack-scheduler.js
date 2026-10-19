@@ -237,11 +237,12 @@ function reconcileBatches(ns, trackedBatches, workers) {
   for (const [batchId, batch] of liveBatches) trackedBatches.set(batchId, batch);
 }
 
-function targetHasInFlightBatch(trackedBatches, targetName) {
+function activeBatchesForTarget(trackedBatches, targetName) {
+  const batches = [];
   for (const batch of trackedBatches.values()) {
-    if (batch.target === targetName && batch.operations.length > 0) return true;
+    if (batch.target === targetName && batch.operations.length > 0) batches.push(batch);
   }
-  return false;
+  return batches;
 }
 
 function publishTrackingSnapshot(ns, trackedBatches, port) {
@@ -367,20 +368,34 @@ function scheduleBatch(ns, targetName, workers, stealFrac, latestEnd, batchId) {
  * We *project* stable state by making each batch self-contained (restore & re-weaken),
  * which allows safe overlap with only a CHAIN_SPACER between batch landings.
  */
-function fillPipeline(ns, targetName, workers, stealFrac, trackedBatches) {
-  // Try to schedule up to PIPELINE batches, spaced by CHAIN_SPACER
+function fillPipeline(ns, targetName, workers, stealFrac, trackedBatches, nextLandingByTarget) {
+  const activeBatches = activeBatchesForTarget(trackedBatches, targetName);
+  const openSlots = Math.max(0, PIPELINE - activeBatches.length);
+  if (openSlots === 0) return 0;
+
   let scheduled = 0;
   const { w } = times(ns, targetName);
-  // choose first latestEnd far enough out to reliably schedule
-  let latestEnd = Date.now() + w + 3 * STEP_PAD;
+  const earliestLanding = Date.now() + w + 3 * STEP_PAD;
+  const latestActiveLanding = activeBatches.reduce(
+    (latest, batch) => Math.max(latest, batch.expectedLanding),
+    0,
+  );
+  // The cursor survives loop iterations. The active-batch fallback reconstructs
+  // safe spacing when the scheduler starts while workers are already running.
+  let latestEnd = Math.max(
+    earliestLanding,
+    nextLandingByTarget.get(targetName) ?? 0,
+    latestActiveLanding > 0 ? latestActiveLanding + CHAIN_SPACER : 0,
+  );
 
-  for (let i = 0; i < PIPELINE; i++) {
+  for (let i = 0; i < openSlots; i++) {
     const batchId = createJobId(ns, "batch", targetName);
     const batch = scheduleBatch(ns, targetName, workers, stealFrac, latestEnd, batchId);
     if (!batch) break;
     trackedBatches.set(batchId, batch);
     scheduled++;
     latestEnd += CHAIN_SPACER;
+    nextLandingByTarget.set(targetName, latestEnd);
   }
   return scheduled;
 }
@@ -400,6 +415,7 @@ export async function main(ns) {
 
   // This registry intentionally lives outside the loop so state persists between iterations.
   const trackedBatches = new Map();
+  const nextLandingByTarget = new Map();
 
   while (true) {
     // Discover everything and root if possible
@@ -442,11 +458,8 @@ export async function main(ns) {
         runPrepStep(ns, target, workers);
         continue;
       }
-      // Step 4 will refill individual open slots. This gate prevents each loop from
-      // recreating a full pipeline and relying on failed exec calls for throttling.
-      if (targetHasInFlightBatch(trackedBatches, target.name)) continue;
-      // Target prepped → keep batches flowing
-      fillPipeline(ns, target.name, workers, STEAL_FRAC, trackedBatches);
+      // Target prepped → refill only the open slots in its independent pipeline.
+      fillPipeline(ns, target.name, workers, STEAL_FRAC, trackedBatches, nextLandingByTarget);
     }
 
     publishTrackingSnapshot(ns, trackedBatches, trackingPort);

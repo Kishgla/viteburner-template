@@ -17,6 +17,8 @@ export async function main(ns) {
   let samples = 0;
   let staleSamples = 0;
   let exceeded = false;
+  let refilledWhileActive = false;
+  const previousIdsByTarget = new Map();
 
   while (Date.now() < deadline) {
     const snapshot = readSnapshot(ns, port);
@@ -30,9 +32,19 @@ export async function main(ns) {
     maximumTotal = Math.max(maximumTotal, snapshot.batches.length);
     const targets = new Set(snapshot.batches.map((batch) => batch.target));
     for (const target of targets) {
-      const count = batchesForTarget(snapshot, target).length;
+      const batches = batchesForTarget(snapshot, target);
+      const count = batches.length;
       maximumByTarget.set(target, Math.max(maximumByTarget.get(target) ?? 0, count));
       if (count > limit) exceeded = true;
+      const currentIds = new Set(batches.map((batch) => batch.id));
+      const previousIds = previousIdsByTarget.get(target);
+      if (
+        previousIds &&
+        [...previousIds].some((id) => currentIds.has(id)) &&
+        [...currentIds].some((id) => !previousIds.has(id))
+      )
+        refilledWhileActive = true;
+      previousIdsByTarget.set(target, currentIds);
     }
     await ns.sleep(250);
   }
@@ -40,9 +52,16 @@ export async function main(ns) {
   ns.tprint(`Soak samples=${samples}, maxTotal=${maximumTotal}, staleSamples=${staleSamples}`);
   for (const [target, maximum] of maximumByTarget) ns.tprint(`  ${target}: max tracked batches=${maximum}`);
   const exercisedMultipleTargets = maximumByTarget.size >= 2;
-  if (!exercisedMultipleTargets) ns.tprint('FAIL: fewer than two targets were observed; multi-target behavior was not exercised.');
-  const passed = samples > 0 && exercisedMultipleTargets && !exceeded && staleSamples === 0;
+  if (!exercisedMultipleTargets)
+    ns.tprint('FAIL: fewer than two targets were observed; multi-target behavior was not exercised.');
+  if (!refilledWhileActive)
+    ns.tprint('FAIL: no target refilled an open slot while an older batch remained active.');
+  const passed = samples > 0 && exercisedMultipleTargets && !exceeded && refilledWhileActive && staleSamples === 0;
   ns.tprint(
-    `${passed ? 'PASS' : 'FAIL'}: per-target tracking ${exceeded ? 'exceeded' : 'stayed within'} limit ${limit}.`,
+    `${passed ? 'PASS' : 'FAIL'}: per-target tracking ${exceeded ? 'exceeded' : 'stayed within'} limit ${limit}; ${
+      refilledWhileActive
+        ? 'open slots were refilled while prior IDs remained active'
+        : 'incremental refill was not observed'
+    }.`,
   );
 }
