@@ -180,6 +180,31 @@ function batchCreatedAt(batchId, fallback) {
   return Number.isFinite(timestamp) ? timestamp : fallback;
 }
 
+/**
+ * Reconstructed landing times can be a few milliseconds early because batch IDs
+ * are created just before the worker delays are calculated. Preserve the known
+ * scheduler invariant when rebuilding state after a restart.
+ */
+function normalizeRecoveredLandings(trackedBatches) {
+  const batchesByTarget = new Map();
+  for (const batch of trackedBatches.values()) {
+    if (!batch.recovered || batch.operations.length === 0) continue;
+    const batches = batchesByTarget.get(batch.target) ?? [];
+    batches.push(batch);
+    batchesByTarget.set(batch.target, batches);
+  }
+
+  for (const batches of batchesByTarget.values()) {
+    batches.sort((a, b) => a.expectedLanding - b.expectedLanding || a.id.localeCompare(b.id));
+    for (let i = 1; i < batches.length; i++) {
+      batches[i].expectedLanding = Math.max(
+        batches[i].expectedLanding,
+        batches[i - 1].expectedLanding + CHAIN_SPACER,
+      );
+    }
+  }
+}
+
 /** Reconcile tracked state with worker process tables, including after a restart. */
 function reconcileBatches(ns, trackedBatches, workers) {
   const now = Date.now();
@@ -235,6 +260,7 @@ function reconcileBatches(ns, trackedBatches, workers) {
   }
 
   for (const [batchId, batch] of liveBatches) trackedBatches.set(batchId, batch);
+  normalizeRecoveredLandings(trackedBatches);
 }
 
 function activeBatchesForTarget(trackedBatches, targetName) {

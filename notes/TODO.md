@@ -72,9 +72,9 @@ Testing:
 Testing:
 
 - [x] After the step 4 implementation is complete, audit the finished behavior and generate the testing tasks and test scripts needed to validate it. ✅ 2026-10-17
-- [ ] Run `test-scripts/pipeline-limit-test.js` and verify one target reaches but never exceeds `PIPELINE`, refills while older batch IDs remain active, and maintains at least `CHAIN_SPACER` between tracked landing times.
-- [ ] Run `test-scripts/batch-tracking-soak-test.js` for at least five minutes with multiple viable targets and verify every target remains bounded while incremental refills occur.
-- [ ] Restart the scheduler with active batches, then rerun `test-scripts/pipeline-limit-test.js` and verify recovered landing times seed a correctly spaced refill without exceeding `PIPELINE`.
+- [x] Run `test-scripts/pipeline-limit-test.js` and verify one target reaches but never exceeds `PIPELINE`, refills while older batch IDs remain active, and maintains at least `CHAIN_SPACER` between tracked landing times. ✅ 2026-10-20
+- [x] Run `test-scripts/batch-tracking-soak-test.js` for at least five minutes with multiple viable targets and verify every target remains bounded while incremental refills occur. ✅ 2026-10-20
+- [x] Restart the scheduler with active batches, then rerun `test-scripts/pipeline-limit-test.js` and verify recovered landing times seed a correctly spaced refill without exceeding `PIPELINE`. ✅ 2026-10-20
 
 ### 5. Make batch dispatch atomic
 

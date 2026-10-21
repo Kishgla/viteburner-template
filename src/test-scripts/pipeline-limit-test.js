@@ -24,7 +24,8 @@ export async function main(ns) {
   let observedFull = false;
   let observedRefill = false;
   let exceeded = false;
-  let spacingErrors = 0;
+  const spacingErrors = new Set();
+  let minimumSpacing = Infinity;
   let samples = 0;
 
   while (Date.now() < deadline && !observedRefill) {
@@ -49,12 +50,13 @@ export async function main(ns) {
     if (batches.length > pipeline) exceeded = true;
     if (batches.length === pipeline) observedFull = true;
 
-    const sortedLandings = batches
-      .map((batch) => batch.expectedLanding)
-      .filter(Number.isFinite)
-      .sort((a, b) => a - b);
-    for (let i = 1; i < sortedLandings.length; i++) {
-      if (sortedLandings[i] - sortedLandings[i - 1] < spacer) spacingErrors += 1;
+    const sortedBatches = batches
+      .filter((batch) => Number.isFinite(batch.expectedLanding))
+      .sort((a, b) => a.expectedLanding - b.expectedLanding);
+    for (let i = 1; i < sortedBatches.length; i++) {
+      const gap = sortedBatches[i].expectedLanding - sortedBatches[i - 1].expectedLanding;
+      minimumSpacing = Math.min(minimumSpacing, gap);
+      if (gap < spacer) spacingErrors.add(`${sortedBatches[i - 1].id}->${sortedBatches[i].id}:${gap}`);
     }
 
     const currentIds = new Set(batches.map((batch) => batch.id));
@@ -67,9 +69,12 @@ export async function main(ns) {
     await ns.sleep(100);
   }
 
-  const passed = samples > 0 && observedFull && observedRefill && !exceeded && spacingErrors === 0;
+  const passed = samples > 0 && observedFull && observedRefill && !exceeded && spacingErrors.size === 0;
   ns.tprint(
     `${passed ? 'PASS' : 'FAIL'}: target=${target ?? 'none'} samples=${samples} ` +
-      `full=${observedFull} incrementalRefill=${observedRefill} exceeded=${exceeded} spacingErrors=${spacingErrors}.`,
+      `full=${observedFull} incrementalRefill=${observedRefill} exceeded=${exceeded} ` +
+      `minimumSpacing=${Number.isFinite(minimumSpacing) ? minimumSpacing : 'n/a'}ms ` +
+      `spacingErrors=${spacingErrors.size}.`,
   );
+  for (const error of spacingErrors) ns.tprint(`  spacing violation: ${error}`);
 }
