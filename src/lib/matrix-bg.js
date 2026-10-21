@@ -7,7 +7,7 @@ const CELL_HEIGHT = 16;
 const FONT_SIZE = 14;
 const DEFAULT_COLOR_SPREAD = 0;
 const SINGLETON_KEY = '__viteburnerMatrixBackground';
-const SINGLETON_VERSION = 7;
+const SINGLETON_VERSION = 8;
 
 const STATUS_FLASHES = {
   ERROR: { duration: 6000, hue: 0, priority: 3 },
@@ -15,6 +15,7 @@ const STATUS_FLASHES = {
   WARN: { duration: 4800, hue: 60, priority: 2 },
   WARNING: { duration: 4800, hue: 60, priority: 2 },
   INFO: { duration: 3600, hue: 210, priority: 1 },
+  PASS: { duration: 3600, hue: 120, priority: 1 },
 };
 
 const OPTION_DEFINITIONS = {

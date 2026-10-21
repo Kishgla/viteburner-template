@@ -206,7 +206,7 @@ Scope: `src/lib/matrix-bg.js` and its `getopts` dependency.
 - [x] Add `-i`/`--init-color` so the first drop in each newly created column uses a fixed hue before reverting to normal color behavior on reset. ✅ 2026-10-18
 - [x] Handle a missing or replaced terminal DOM node without leaving a stale canvas behind. ✅ 2026-10-17
 - [x] Restore any terminal attributes or styles changed by the script during cleanup. ✅ 2026-10-17
-- [x] Observe new terminal output and assign status colors to drops born during `ERROR:`, `FAIL:`, `WARN:`, `WARNING:`, and `INFO:` windows, retaining each color until that drop resets. ✅ 2026-10-18
+- [x] Observe new terminal output and assign status colors to drops born during `ERROR:`, `FAIL:`, `WARN:`, `WARNING:`, `INFO:`, and `PASS:` windows, retaining each color until that drop resets. ✅ 2026-10-20
 
 ### Maintainability and user experience
 
@@ -251,6 +251,7 @@ Testing:
 - [x] Run a 30-minute soak test while resizing, navigating, and live-reconfiguring; verify bounded memory usage, one owner, one canvas, and no repeated log noise. ✅ 2026-10-17
 - [x] Smoke-test against the current Bitburner release and record the terminal selector and wrapper hierarchy observed during the test. ✅ 2026-10-17
 - [ ] Display an `INFO:` terminal message; verify only drops born during the response window become blue and retain blue until they reset.
+- [ ] Display a `PASS:` terminal message; verify only drops born during the response window become green and retain green until they reset.
 - [ ] Display a `WARN:` terminal message; verify only drops born during the response window become yellow and retain yellow until they reset.
 - [ ] Display a `WARNING:` terminal message; verify it behaves identically to `WARN:`.
 - [ ] Display an `ERROR:` terminal message; verify only drops born during the response window become red and retain red until they reset.
