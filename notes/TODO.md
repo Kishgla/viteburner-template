@@ -78,15 +78,26 @@ Testing:
 
 ### 5. Make batch dispatch atomic
 
-- [ ] Calculate whether enough aggregate RAM exists before launching a batch.
-- [ ] Record the thread allocation for every operation and worker.
-- [ ] Distinguish complete, partial, and failed dispatches.
-- [ ] Avoid launching an incomplete batch where practical.
-- [ ] Define safe cleanup or recovery behavior after a partial launch.
+Singleton lifecycle:
+
+- [x] Bootstrap the scheduler with an internal version marker and enforce one network-wide owner. ✅ 2026-10-20
+- [x] Automatically replace older or unversioned scheduler instances without killing their active workers. ✅ 2026-10-20
+- [ ] Launch the current scheduler twice and verify the second launch reports the existing PID without creating another persistent owner.
+- [ ] Increment a test copy's singleton version, launch it over the current owner, and verify the old scheduler exits while the new scheduler reconstructs its active batches.
+
+- [x] Calculate whether enough aggregate RAM exists before launching a batch.
+- [x] Record the thread allocation for every operation and worker.
+- [x] Distinguish complete, partial, and failed dispatches.
+- [x] Avoid launching an incomplete batch where practical.
+- [x] Define safe cleanup or recovery behavior after a partial launch.
 
 Testing:
 
-- [ ] After the step 5 implementation is complete, audit the finished behavior and generate the testing tasks and test scripts needed to validate it.
+- [x] After the step 5 implementation is complete, audit the finished behavior and generate the testing tasks and test scripts needed to validate it. ✅ 2026-10-20
+- [x] Run `test-scripts/atomic-dispatch-test.js` with normal available RAM and verify complete batches expose all four phase allocations and matching live workers. ✅ 2026-10-20
+- [x] Run `utility-scripts/atomic-dispatch-ram-pressure.js`, then `test-scripts/atomic-dispatch-test.js 20 120000 rejection`, and verify an insufficient-RAM attempt is rejected without launching any worker for that batch ID. ✅ 2026-10-20
+- [ ] Force one planned `ns.exec()` to fail after at least one worker launches, then verify the attempt is classified as failed or partial and all launched workers are killed.
+- [ ] Rerun `test-scripts/pipeline-limit-test.js` and `test-scripts/batch-order-test.js` to verify atomic planning preserves the pipeline cap, landing spacing, and HWGW completion order.
 
 ### 6. Improve preparation tracking
 
