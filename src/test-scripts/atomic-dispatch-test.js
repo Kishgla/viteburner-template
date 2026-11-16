@@ -10,7 +10,8 @@ const LIVE_SCAN_MARGIN = 1_000;
  * Usage: run test-scripts/atomic-dispatch-test.js [port=20] [timeout=120000] [mode=complete]
  *
  * Use mode `rejection` in a constrained-RAM run to require an insufficient-RAM
- * rejection. The default mode validates a normal, complete dispatch.
+ * rejection. Mode `rollback` validates the scheduler's test-only injected exec
+ * failure (`--test-fail-exec-after=1`). The default validates a complete dispatch.
  *
  * @param {NS} ns
  */
@@ -20,16 +21,22 @@ export async function main(ns) {
   const timeout = Math.max(1_000, Number(ns.args[1] ?? 120_000));
   const mode = String(ns.args[2] ?? 'complete').toLowerCase();
   const requireRejection = mode === 'rejection';
+  const requireRollback = mode === 'rollback';
+  const startedAt = Date.now();
   const deadline = Date.now() + timeout;
   let checkedComplete = false;
   let checkedRejected = false;
+  let checkedRollback = false;
   let snapshots = 0;
   let observedBatches = 0;
   let legacyBatches = 0;
   let observedAttempts = 0;
   const errors = new Set();
 
-  while (Date.now() < deadline && !(requireRejection ? checkedRejected : checkedComplete)) {
+  while (
+    Date.now() < deadline &&
+    !(requireRejection ? checkedRejected : requireRollback ? checkedRollback : checkedComplete)
+  ) {
     const snapshot = readSnapshot(ns, port);
     if (!snapshot || Date.now() - snapshot.timestamp > 1_000) {
       await ns.sleep(100);
@@ -74,22 +81,25 @@ export async function main(ns) {
       break;
     }
 
-    for (const attempt of requireRejection ? snapshot.dispatchAttempts ?? [] : []) {
-      if (attempt.status !== 'failed' || attempt.reason !== 'insufficient-ram') continue;
+    for (const attempt of requireRejection || requireRollback ? snapshot.dispatchAttempts ?? [] : []) {
+      if (attempt.timestamp < startedAt) continue;
+      if (requireRejection && (attempt.status !== 'failed' || attempt.reason !== 'insufficient-ram')) continue;
+      if (requireRollback && (attempt.status !== 'failed' || attempt.reason !== 'launch-failed')) continue;
       const processes = findWorkerProcesses(ns);
-      checkedRejected = true;
+      if (requireRejection) checkedRejected = true;
+      if (requireRollback) checkedRollback = true;
       if (processes.some((process) => String(process.args[3]) === attempt.id)) {
-        errors.add(`${attempt.id}: insufficient-RAM rejection launched a worker`);
+        errors.add(`${attempt.id}: rejected dispatch left a worker running`);
       }
     }
     await ns.sleep(100);
   }
 
-  const requiredCheck = requireRejection ? checkedRejected : checkedComplete;
+  const requiredCheck = requireRejection ? checkedRejected : requireRollback ? checkedRollback : checkedComplete;
   const passed = requiredCheck && errors.size === 0;
   ns.tprint(
     `${passed ? 'PASS' : 'FAIL'}: mode=${mode} completeDispatch=${checkedComplete} ` +
-      `ramRejection=${checkedRejected} errors=${errors.size}.`,
+      `ramRejection=${checkedRejected} rollback=${checkedRollback} errors=${errors.size}.`,
   );
   if (!requiredCheck) {
     ns.tprint(
@@ -99,11 +109,14 @@ export async function main(ns) {
   }
   if (!checkedComplete && legacyBatches > 0) {
     ns.tprint('  Batches lack Step 5 fields. Restart dynamic-hack-scheduler.js so it loads the updated code.');
-  } else if (!checkedComplete && !requireRejection) {
+  } else if (!checkedComplete && !requireRejection && !requireRollback) {
     ns.tprint('  No new complete batch was observed; wait for recovered batches to drain or restart without workers.');
   }
   if (requireRejection && !checkedRejected) {
     ns.tprint('  No insufficient-RAM attempt observed; reduce available worker RAM and rerun rejection mode.');
+  }
+  if (requireRollback && !checkedRollback) {
+    ns.tprint('  No rollback observed; start the scheduler with --test-fail-exec-after=1 on a prepared target.');
   }
   const displayedErrors = [...errors].slice(0, 20);
   for (const error of displayedErrors) ns.tprint(`  ${error}`);

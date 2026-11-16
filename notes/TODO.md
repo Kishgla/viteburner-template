@@ -82,8 +82,8 @@ Singleton lifecycle:
 
 - [x] Bootstrap the scheduler with an internal version marker and enforce one network-wide owner. ✅ 2026-10-20
 - [x] Automatically replace older or unversioned scheduler instances without killing their active workers. ✅ 2026-10-20
-- [ ] Launch the current scheduler twice and verify the second launch reports the existing PID without creating another persistent owner.
-- [ ] Increment a test copy's singleton version, launch it over the current owner, and verify the old scheduler exits while the new scheduler reconstructs its active batches.
+- [x] Launch the current scheduler twice and verify the second launch reports the existing PID without creating another persistent owner. ✅ 2026-10-30
+- [x] Increment a test copy's singleton version, launch it over the current owner, and verify the old scheduler exits while the new scheduler reconstructs its active batches. ✅ 2026-11-02
 
 - [x] Calculate whether enough aggregate RAM exists before launching a batch.
 - [x] Record the thread allocation for every operation and worker.
@@ -96,32 +96,60 @@ Testing:
 - [x] After the step 5 implementation is complete, audit the finished behavior and generate the testing tasks and test scripts needed to validate it. ✅ 2026-10-20
 - [x] Run `test-scripts/atomic-dispatch-test.js` with normal available RAM and verify complete batches expose all four phase allocations and matching live workers. ✅ 2026-10-20
 - [x] Run `utility-scripts/atomic-dispatch-ram-pressure.js`, then `test-scripts/atomic-dispatch-test.js 20 120000 rejection`, and verify an insufficient-RAM attempt is rejected without launching any worker for that batch ID. ✅ 2026-10-20
-- [ ] Force one planned `ns.exec()` to fail after at least one worker launches, then verify the attempt is classified as failed or partial and all launched workers are killed.
-- [ ] Rerun `test-scripts/pipeline-limit-test.js` and `test-scripts/batch-order-test.js` to verify atomic planning preserves the pipeline cap, landing spacing, and HWGW completion order.
+- [x] Force one planned `ns.exec()` to fail after at least one worker launches, then verify the attempt is classified as failed or partial and all launched workers are killed. ✅ 2026-11-02
+- [x] Rerun `test-scripts/pipeline-limit-test.js` and `test-scripts/batch-order-test.js` to verify atomic planning preserves the pipeline cap, landing spacing, and HWGW completion order. ✅ 2026-11-15
 
 ### 6. Improve preparation tracking
 
-- [ ] Track prep work that is already in flight for each target.
-- [ ] Prevent duplicate grow and weaken prep jobs.
-- [ ] Wait for scheduled prep work to land before reevaluating server state.
-- [ ] Transition cleanly from preparation to batching.
-- [ ] Handle targets that fall out of their prepared state during batching.
+- [x] Track prep work that is already in flight for each target.
+- [x] Prevent duplicate grow and weaken prep jobs.
+- [x] Wait for scheduled prep work to land before reevaluating server state.
+- [x] Transition cleanly from preparation to batching.
+- [x] Handle targets that fall out of their prepared state during batching.
 
 Testing:
 
-- [ ] After the step 6 implementation is complete, audit the finished behavior and generate the testing tasks and test scripts needed to validate it.
+- [x] After the step 6 implementation is complete, audit the finished behavior and generate the testing tasks and test scripts needed to validate it. ✅ 2026-10-30
+- [x] Put a target below its funding threshold, run `test-scripts/prep-tracking-test.js`, and verify one grow/weaken prep is tracked until landing before batching begins. ✅ 2026-11-15
+- [x] Put a target above its security threshold, run `test-scripts/prep-tracking-test.js`, and verify one weaken prep is tracked until landing before batching begins. ✅ 2026-11-15
+- [x] Restart the scheduler during prep, rerun `test-scripts/prep-tracking-test.js`, and verify the existing prep is recovered without duplicate workers. ✅ 2026-11-15
+- [x] Let a batched target fall out of prep, then verify the scheduler drains its active pipeline before launching prep work. ✅ 2026-11-15
 
 ### 7. Add operational visibility
 
-- [ ] Log batch IDs, targets, landing times, and thread allocations.
-- [ ] Show active pipeline depth per target.
-- [ ] Report incomplete dispatches and failed worker launches clearly.
-- [ ] Add a concise status view without flooding the script log.
-- [ ] Document how to start, monitor, and stop the scheduler safely.
+- [x] Log batch IDs, targets, landing times, and thread allocations.
+- [x] Show active pipeline depth per target.
+- [x] Report incomplete dispatches and failed worker launches clearly.
+- [x] Add a concise status view without flooding the script log.
+- [x] Document how to start, monitor, and stop the scheduler safely.
 
 Testing:
 
-- [ ] After the step 7 implementation is complete, audit the finished behavior and generate the testing tasks and test scripts needed to validate it.
+- [x] After the step 7 implementation is complete, audit the finished behavior and generate the testing tasks and test scripts needed to validate it. ✅ 2026-10-30
+- [x] Run `test-scripts/scheduler-status-test.js` and verify the snapshot exposes scheduler identity, prep state, per-target state, pipeline depth, allocations, and recent dispatch attempts. ✅ 2026-11-16
+- [ ] Open the scheduler log during prep, batching, RAM rejection, and recovery; verify the two-second status refresh is concise and the latest failure remains visible.
+- [x] Start a prepared target with `--test-fail-exec-after=1`, run `test-scripts/atomic-dispatch-test.js 20 120000 rollback`, and verify launched workers are rolled back. Remove the test flag before normal operation. ✅ 2026-11-16
+- [x] Follow the scheduler operations guide in `README.md` to start, monitor, relaunch, and stop the scheduler without leaving a duplicate owner. ✅ 2026-11-16
+
+### 8. Stabilize the live scheduler dashboard
+
+- [ ] Render target status as fixed-width columns with headers for target, state, pipeline depth, prep kind, and next landing time.
+- [ ] Keep targets in a stable order between refreshes so unchanged targets remain on the same rows.
+- [ ] Prevent long target names, job IDs, allocation details, and failure text from wrapping or shifting dashboard columns.
+- [ ] Move variable-length job IDs and allocation details out of the live dashboard and keep them available in snapshots or one-shot reports.
+- [ ] Reserve a stable, bounded section for the latest failure and keep it visible until a newer failure supersedes it.
+- [ ] Add a configurable status interval, retain a sensible readable default, and support disabling the live dashboard for event-only logging.
+- [ ] Update the scheduler operations guide with the dashboard columns, status interval option, and event-only mode.
+
+Testing:
+
+- [ ] Verify repeated refreshes update values in place without changing column positions or target row order.
+- [ ] Exercise prep, batching, draining, recovery, RAM rejection, and rollback states; verify each state is readable without wrapped or shifting rows.
+- [ ] Test short and maximum-length target names, single- and double-digit counts, long failure details, and changing landing times.
+- [ ] Verify allocation details remain available through the tracking snapshot and one-shot report after removal from the live dashboard.
+- [ ] Verify the latest failure remains visible across refreshes and is replaced only by a newer failure.
+- [ ] Test the default interval, a custom interval, invalid interval arguments, and event-only mode.
+- [ ] Run a sustained scheduler session and confirm the tail remains bounded, aligned, and readable without log flooding.
 
 ## Darknet agent update
 
@@ -270,6 +298,7 @@ Testing:
 - [ ] Display INFO, WARN, and ERROR messages in quick succession; verify the highest active severity wins and lower-severity output does not interrupt it.
 - [ ] Enable rainbow mode, trigger each status type, and verify status-colored drops remain fixed at their assigned hue until reset while ordinary drops continue cycling.
 - [ ] Navigate away from and back to the terminal after a status flash; verify the output observer reconnects once without replaying old messages.
+- [ ] Leave an old `ERROR:` or `FAIL:` entry in terminal history, then produce unrelated terminal output and trigger terminal DOM rerenders; verify the Matrix observer does not replay the historical error or pulse red again.
 - [ ] Relaunch or reattach with `--init-color 240`; verify the initial sweep is red and each column switches to the configured palette only after its first reset.
 - [ ] Combine `--init-color`, `--spread`, and `--rainbow`; verify initial drops stay fixed until reset and later drops follow spread and rainbow settings.
 - [ ] Trigger a status message while columns are being created; verify the status hue takes priority over `--init-color` for those columns.
