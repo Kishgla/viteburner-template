@@ -54,9 +54,16 @@ const WEAKEN = 'weaken.js';
 const GROW = 'grow.js';
 const HACK = 'hack.js';
 // Increment whenever a deployed scheduler must replace an already-running copy.
-const SINGLETON_VERSION = 3;
+const SINGLETON_VERSION = 8;
 const VERSION_ARG = '--scheduler-version=';
 const EXEC_FAILURE_ARG = '--test-fail-exec-after=';
+const STATUS_INTERVAL_ARG = '--status-interval=';
+const EVENT_ONLY_ARG = '--event-only';
+const XP_ARG = '--xp';
+const DEFAULT_STATUS_INTERVAL = 2_000;
+const MIN_STATUS_INTERVAL = 250;
+const XP_JOB_PREFIX = 'xp-joesguns-';
+const XP_TARGET = 'joesguns';
 
 const SECURITY_BUFFER = 5; // how close to min-sec before we say "prepped"
 const FUNDING_THRESHOLD = 0.95; // how close to moneyMax before we say "funded"
@@ -99,7 +106,7 @@ function schedulerVersion(args) {
 function claimSchedulerSingleton(ns) {
   const scriptName = ns.getScriptName();
   const currentVersion = schedulerVersion(ns.args);
-  const schedulers = getAllServerNames(ns).flatMap((host) =>
+  const schedulers = getAllServerNames(ns, false).flatMap((host) =>
     ns
       .ps(host)
       .filter((process) => process.filename === scriptName && process.pid !== ns.pid)
@@ -215,6 +222,66 @@ function configuredExecFailure(ns) {
   if (marker === undefined) return null;
   const count = Number(String(marker).slice(EXEC_FAILURE_ARG.length));
   return Number.isInteger(count) && count >= 0 ? count : null;
+}
+
+function statusOptions(args) {
+  const eventOnly = args.some((arg) => String(arg) === EVENT_ONLY_ARG);
+  const markers = args.filter((arg) => String(arg).startsWith(STATUS_INTERVAL_ARG));
+  if (markers.length > 1) return { valid: false, error: `${STATUS_INTERVAL_ARG} may only be supplied once.` };
+  if (markers.length === 0) return { valid: true, eventOnly, interval: DEFAULT_STATUS_INTERVAL };
+  const interval = Number(String(markers[0]).slice(STATUS_INTERVAL_ARG.length));
+  if (!Number.isFinite(interval) || !Number.isInteger(interval) || interval < MIN_STATUS_INTERVAL) {
+    return {
+      valid: false,
+      error: `${STATUS_INTERVAL_ARG} must be an integer of at least ${MIN_STATUS_INTERVAL} milliseconds.`,
+    };
+  }
+  return { valid: true, eventOnly, interval };
+}
+
+function xpProcesses(ns, workers) {
+  return workers.flatMap((worker) =>
+    ns
+      .ps(worker.name)
+      .filter((process) => process.filename === GROW && String(process.args[3] ?? '').startsWith(XP_JOB_PREFIX))
+      .map((process) => ({ host: worker.name, ...process })),
+  );
+}
+
+function reclaimXpRam(ns, workers) {
+  let killed = 0;
+  for (const process of xpProcesses(ns, workers)) {
+    if (ns.kill(process.pid, process.host)) killed += 1;
+  }
+  return killed;
+}
+
+function schedulerNeedsRam(ns, viableTargets, trackedBatches, trackedPreps) {
+  for (const target of viableTargets) {
+    const batches = activeBatchesForTarget(trackedBatches, target.name);
+    const prep = activePrepForTarget(trackedPreps, target.name);
+    if (!isPrepped(ns, target)) {
+      if (batches.length === 0 && prep === null) return true;
+    } else if (prep === null && batches.length < PIPELINE) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function fillXpRam(ns, workers, enabled) {
+  if (!enabled || !ns.hasRootAccess(XP_TARGET)) return 0;
+  const ramPerThread = ns.getScriptRam(GROW, 'home');
+  if (ramPerThread <= 0) return 0;
+  let launched = 0;
+  for (const worker of workers) {
+    const threads = Math.floor(freeRam(ns, worker.name) / ramPerThread);
+    if (threads <= 0) continue;
+    const id = `${XP_JOB_PREFIX}${Date.now().toString(36)}-${worker.name}-${idSequence++}`;
+    const pid = ns.exec(GROW, worker.name, threads, XP_TARGET, false, 0, id);
+    if (pid !== 0) launched += 1;
+  }
+  return launched;
 }
 
 function launchBatchPlan(ns, targetName, batchId, plan) {
@@ -412,7 +479,16 @@ function activeBatchesForTarget(trackedBatches, targetName) {
   return batches;
 }
 
-function publishTrackingSnapshot(ns, trackedBatches, trackedPreps, targetStatuses, port, dispatchAttempts = []) {
+function publishTrackingSnapshot(
+  ns,
+  trackedBatches,
+  trackedPreps,
+  targetStatuses,
+  port,
+  dispatchAttempts = [],
+  latestFailure = null,
+  dashboard = {},
+) {
   if (port === null) return;
   const snapshot = {
     schedulerPid: ns.pid,
@@ -422,6 +498,8 @@ function publishTrackingSnapshot(ns, trackedBatches, trackedPreps, targetStatuse
     preps: [...trackedPreps.values()],
     targets: targetStatuses,
     dispatchAttempts,
+    latestFailure,
+    dashboard,
   };
   ns.clearPort(port);
   ns.writePort(port, JSON.stringify(snapshot));
@@ -607,7 +685,16 @@ function scheduleBatch(ns, targetName, workers, stealFrac, latestEnd, batchId) {
  * We *project* stable state by making each batch self-contained (restore & re-weaken),
  * which allows safe overlap with only a CHAIN_SPACER between batch landings.
  */
-function fillPipeline(ns, targetName, workers, stealFrac, trackedBatches, nextLandingByTarget, dispatchAttempts) {
+function fillPipeline(
+  ns,
+  targetName,
+  workers,
+  stealFrac,
+  trackedBatches,
+  nextLandingByTarget,
+  dispatchAttempts,
+  operationalState,
+) {
   const activeBatches = activeBatchesForTarget(trackedBatches, targetName);
   const openSlots = Math.max(0, PIPELINE - activeBatches.length);
   if (openSlots === 0) return 0;
@@ -627,7 +714,7 @@ function fillPipeline(ns, targetName, workers, stealFrac, trackedBatches, nextLa
   for (let i = 0; i < openSlots; i++) {
     const batchId = createJobId(ns, 'batch', targetName);
     const result = scheduleBatch(ns, targetName, workers, stealFrac, latestEnd, batchId);
-    recordAttempt(dispatchAttempts, result.attempt);
+    recordAttempt(dispatchAttempts, result.attempt, operationalState);
     if (result.batch) trackedBatches.set(batchId, result.batch);
     if (result.status !== 'complete') break;
     scheduled++;
@@ -637,9 +724,11 @@ function fillPipeline(ns, targetName, workers, stealFrac, trackedBatches, nextLa
   return scheduled;
 }
 
-function recordAttempt(dispatchAttempts, attempt) {
-  dispatchAttempts.push({ ...attempt, timestamp: Date.now() });
+function recordAttempt(dispatchAttempts, attempt, operationalState) {
+  const recorded = { ...attempt, timestamp: Date.now() };
+  dispatchAttempts.push(recorded);
   if (dispatchAttempts.length > 50) dispatchAttempts.shift();
+  if (recorded.status !== 'complete') operationalState.latestFailure = recorded;
 }
 
 function formatAllocation(allocations = []) {
@@ -661,39 +750,63 @@ function logLaunch(ns, kind, job) {
   );
 }
 
-function renderStatus(ns, targetStatuses, trackedBatches, trackedPreps, dispatchAttempts) {
+function fitColumn(value, width) {
+  const text = String(value ?? '-');
+  if (text.length <= width) return text.padEnd(width);
+  return `${text.slice(0, Math.max(0, width - 1))}…`;
+}
+
+function formatLanding(timestamp) {
+  if (!Number.isFinite(timestamp)) return '-';
+  return new Date(timestamp).toLocaleTimeString();
+}
+
+function boundedFailure(failure, width = 65) {
+  if (!failure) return 'Latest failure: none';
+  const missing = failure.missing ? ` ${failure.missing.phase}:${failure.missing.threads}` : '';
+  const text = `Latest failure: ${failure.target ?? '-'} ${failure.reason ?? failure.status}${missing}`;
+  return text.length <= width ? text : `${text.slice(0, width - 1)}…`;
+}
+
+function renderStatus(ns, targetStatuses, trackedBatches, trackedPreps, latestFailure, activeXpWorkers) {
   ns.clearLog();
-  ns.print(`Dynamic scheduler v${SINGLETON_VERSION} | batches=${trackedBatches.size} preps=${trackedPreps.size}`);
+  const xpThreads = activeXpWorkers.reduce((total, process) => total + process.threads, 0);
+  ns.print(
+    `Dynamic scheduler v${SINGLETON_VERSION} | batches=${trackedBatches.size} preps=${trackedPreps.size} xp=${activeXpWorkers.length}/${xpThreads}t`,
+  );
+  ns.print(
+    `${fitColumn('TARGET', 20)} ${fitColumn('STATE', 12)} ${fitColumn('PIPE', 6)} ${fitColumn('PREP', 8)} ${fitColumn(
+      'NEXT LANDING',
+      15,
+    )}`,
+  );
   for (const status of targetStatuses.slice(0, 20)) {
-    ns.print(`${status.target.padEnd(20)} ${status.state.padEnd(12)} pipeline=${status.pipeline}/${PIPELINE}`);
-  }
-  const activeJobs = [...trackedPreps.values(), ...trackedBatches.values()]
-    .filter((job) => Array.isArray(job.threadAllocation))
-    .sort((a, b) => b.expectedLanding - a.expectedLanding)
-    .slice(0, 3);
-  for (const job of activeJobs) {
     ns.print(
-      `${job.id} target=${job.target} landing=${new Date(job.expectedLanding).toLocaleTimeString()} ${formatAllocation(
-        job.threadAllocation,
-      )}`,
+      `${fitColumn(status.target, 20)} ${fitColumn(status.state, 12)} ${fitColumn(
+        `${status.pipeline}/${PIPELINE}`,
+        6,
+      )} ${fitColumn(status.prepKind, 8)} ${fitColumn(formatLanding(status.nextLanding), 15)}`,
     );
   }
-  const failure = [...dispatchAttempts].reverse().find((attempt) => attempt.status !== 'complete');
-  if (failure)
-    ns.print(
-      `Last failure: ${failure.id} ${failure.reason}${failure.missing ? ` ${JSON.stringify(failure.missing)}` : ''}`,
-    );
+  ns.print('-'.repeat(65));
+  ns.print(boundedFailure(latestFailure));
 }
 
 /*******************************************************************************\
 |* Main Loop                                                                   *|
 \*******************************************************************************/
 export async function main(ns) {
+  const dashboardOptions = statusOptions(ns.args);
+  if (!dashboardOptions.valid) {
+    ns.tprint(`${ns.getScriptName()}: ${dashboardOptions.error}`);
+    return;
+  }
+  const xpEnabled = ns.args.some((arg) => String(arg) === XP_ARG);
   if (!claimSchedulerSingleton(ns)) return;
 
-  ns.disableLog('sleep');
-  ns.disableLog('getServerUsedRam');
-  ns.disableLog('scp');
+  // The live dashboard owns the tail contents. Netscript API calls otherwise
+  // append their own lines immediately after every refresh and displace it.
+  ns.disableLog('ALL');
 
   const requestedPort = Number(ns.args.find((arg) => Number.isInteger(Number(arg))));
   const trackingPort =
@@ -704,12 +817,15 @@ export async function main(ns) {
   const trackedPreps = new Map();
   const nextLandingByTarget = new Map();
   const dispatchAttempts = [];
+  const operationalState = { latestFailure: null };
+  const targetOrder = new Map();
+  let nextTargetOrder = 0;
   let lastStatusAt = 0;
   let initialRecoveryPass = true;
 
   while (true) {
     // Discover everything and root if possible
-    const serverNames = getAllServerNames(ns);
+    const serverNames = getAllServerNames(ns, false);
     const serverObjects = getServerObjects(ns, serverNames, SECURITY_BUFFER, FUNDING_THRESHOLD);
     const hackingLevel = ns.getHackingLevel();
 
@@ -741,6 +857,10 @@ export async function main(ns) {
       return scoreB - scoreA;
     });
 
+    // XP workers are deliberately preemptible. Remove them before any target
+    // needs prep or a pipeline slot so atomic scheduler planning sees the RAM.
+    if (!xpEnabled || schedulerNeedsRam(ns, viableTargets, trackedBatches, trackedPreps)) reclaimXpRam(ns, workers);
+
     const targetStatuses = [];
     // Finish existing batches, prep exactly once, then refill the pipeline.
     for (const target of viableTargets) {
@@ -765,19 +885,23 @@ export async function main(ns) {
         }
         const result = runPrepStep(ns, target, workers);
         if (result) {
-          recordAttempt(dispatchAttempts, {
-            id: result.prep?.id ?? `prep-${target.name}`,
-            target: target.name,
-            status: result.status,
-            reason: result.reason,
-            missing: result.missing,
-            kind: 'prep',
-          });
+          recordAttempt(
+            dispatchAttempts,
+            {
+              id: result.prep?.id ?? `prep-${target.name}`,
+              target: target.name,
+              status: result.status,
+              reason: result.reason,
+              missing: result.missing,
+              kind: 'prep',
+            },
+            operationalState,
+          );
           if (result.prep) {
             trackedPreps.set(result.prep.id, result.prep);
-            logLaunch(ns, 'PREP', result.prep);
+            if (dashboardOptions.eventOnly) logLaunch(ns, 'PREP', result.prep);
           }
-          if (result.status !== 'complete') {
+          if (dashboardOptions.eventOnly && result.status !== 'complete') {
             ns.print(`WARN: prep dispatch for ${target.name} ${result.status}: ${result.reason}`);
           }
         }
@@ -794,18 +918,53 @@ export async function main(ns) {
         continue;
       }
       const before = new Set(activeBatches.map((batch) => batch.id));
-      fillPipeline(ns, target.name, workers, STEAL_FRAC, trackedBatches, nextLandingByTarget, dispatchAttempts);
+      fillPipeline(
+        ns,
+        target.name,
+        workers,
+        STEAL_FRAC,
+        trackedBatches,
+        nextLandingByTarget,
+        dispatchAttempts,
+        operationalState,
+      );
       const currentBatches = activeBatchesForTarget(trackedBatches, target.name);
       for (const batch of currentBatches) {
-        if (!before.has(batch.id)) logLaunch(ns, 'BATCH', batch);
+        if (dashboardOptions.eventOnly && !before.has(batch.id)) logLaunch(ns, 'BATCH', batch);
       }
       targetStatuses.push({ target: target.name, state: 'batching', pipeline: currentBatches.length });
     }
 
-    publishTrackingSnapshot(ns, trackedBatches, trackedPreps, targetStatuses, trackingPort, dispatchAttempts);
+    for (const status of targetStatuses) {
+      if (!targetOrder.has(status.target)) targetOrder.set(status.target, nextTargetOrder++);
+      const prep = activePrepForTarget(trackedPreps, status.target);
+      const batches = activeBatchesForTarget(trackedBatches, status.target);
+      const landings = [...batches, ...(prep ? [prep] : [])].map((job) => job.expectedLanding).filter(Number.isFinite);
+      status.prepKind = prep?.kind ?? '-';
+      status.nextLanding = landings.length > 0 ? Math.min(...landings) : null;
+    }
+    targetStatuses.sort((a, b) => targetOrder.get(a.target) - targetOrder.get(b.target));
+    fillXpRam(ns, workers, xpEnabled);
+    const activeXpWorkers = xpProcesses(ns, workers);
+    publishTrackingSnapshot(
+      ns,
+      trackedBatches,
+      trackedPreps,
+      targetStatuses,
+      trackingPort,
+      dispatchAttempts,
+      operationalState.latestFailure,
+      {
+        eventOnly: dashboardOptions.eventOnly,
+        statusInterval: dashboardOptions.interval,
+        xpEnabled,
+        xpWorkers: activeXpWorkers.length,
+        xpThreads: activeXpWorkers.reduce((total, process) => total + process.threads, 0),
+      },
+    );
     initialRecoveryPass = false;
-    if (Date.now() - lastStatusAt >= 2_000) {
-      renderStatus(ns, targetStatuses, trackedBatches, trackedPreps, dispatchAttempts);
+    if (!dashboardOptions.eventOnly && Date.now() - lastStatusAt >= dashboardOptions.interval) {
+      renderStatus(ns, targetStatuses, trackedBatches, trackedPreps, operationalState.latestFailure, activeXpWorkers);
       lastStatusAt = Date.now();
     }
 
