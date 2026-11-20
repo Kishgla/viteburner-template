@@ -127,29 +127,28 @@ Testing:
 
 - [x] After the step 7 implementation is complete, audit the finished behavior and generate the testing tasks and test scripts needed to validate it. ✅ 2026-10-30
 - [x] Run `test-scripts/scheduler-status-test.js` and verify the snapshot exposes scheduler identity, prep state, per-target state, pipeline depth, allocations, and recent dispatch attempts. ✅ 2026-11-16
-- [ ] Open the scheduler log during prep, batching, RAM rejection, and recovery; verify the two-second status refresh is concise and the latest failure remains visible.
 - [x] Start a prepared target with `--test-fail-exec-after=1`, run `test-scripts/atomic-dispatch-test.js 20 120000 rollback`, and verify launched workers are rolled back. Remove the test flag before normal operation. ✅ 2026-11-16
 - [x] Follow the scheduler operations guide in `README.md` to start, monitor, relaunch, and stop the scheduler without leaving a duplicate owner. ✅ 2026-11-16
 
 ### 8. Stabilize the live scheduler dashboard
 
-- [ ] Render target status as fixed-width columns with headers for target, state, pipeline depth, prep kind, and next landing time.
-- [ ] Keep targets in a stable order between refreshes so unchanged targets remain on the same rows.
-- [ ] Prevent long target names, job IDs, allocation details, and failure text from wrapping or shifting dashboard columns.
-- [ ] Move variable-length job IDs and allocation details out of the live dashboard and keep them available in snapshots or one-shot reports.
-- [ ] Reserve a stable, bounded section for the latest failure and keep it visible until a newer failure supersedes it.
-- [ ] Add a configurable status interval, retain a sensible readable default, and support disabling the live dashboard for event-only logging.
-- [ ] Update the scheduler operations guide with the dashboard columns, status interval option, and event-only mode.
+- [x] Render target status as fixed-width columns with headers for target, state, pipeline depth, prep kind, and next landing time. ✅ 2026-11-16
+- [x] Keep targets in a stable order between refreshes so unchanged targets remain on the same rows. ✅ 2026-11-16
+- [x] Prevent long target names, job IDs, allocation details, and failure text from wrapping or shifting dashboard columns. ✅ 2026-11-16
+- [x] Move variable-length job IDs and allocation details out of the live dashboard and keep them available in snapshots or one-shot reports. ✅ 2026-11-16
+- [x] Reserve a stable, bounded section for the latest failure and keep it visible until a newer failure supersedes it. ✅ 2026-11-16
+- [x] Add a configurable status interval, retain a sensible readable default, and support disabling the live dashboard for event-only logging. ✅ 2026-11-16
+- [x] Update the scheduler operations guide with the dashboard columns, status interval option, and event-only mode. ✅ 2026-11-16
 
 Testing:
 
-- [ ] Verify repeated refreshes update values in place without changing column positions or target row order.
-- [ ] Exercise prep, batching, draining, recovery, RAM rejection, and rollback states; verify each state is readable without wrapped or shifting rows.
-- [ ] Test short and maximum-length target names, single- and double-digit counts, long failure details, and changing landing times.
-- [ ] Verify allocation details remain available through the tracking snapshot and one-shot report after removal from the live dashboard.
-- [ ] Verify the latest failure remains visible across refreshes and is replaced only by a newer failure.
-- [ ] Test the default interval, a custom interval, invalid interval arguments, and event-only mode.
-- [ ] Run a sustained scheduler session and confirm the tail remains bounded, aligned, and readable without log flooding.
+- [ ] Exercise prep, batching, draining, recovery, RAM rejection, and rollback
+  with short and maximum-length values; verify rows stay aligned and the latest
+  failure remains visible until a newer failure replaces it.
+- [ ] Test the default interval, one custom interval, invalid interval handling,
+  and event-only mode.
+- [ ] Run one sustained scheduler session; verify refreshes preserve target
+  order and column positions and the tail remains bounded without log flooding.
 
 ## Darknet agent update
 
@@ -167,13 +166,12 @@ Testing:
 
 Testing:
 
-- [ ] Test every supported extension with representative content.
-- [ ] Test malformed, empty, duplicate, and unexpectedly large files.
-- [ ] Confirm multiple `.cache` files on one host are all handled.
-- [ ] Confirm unchanged files are not repeatedly processed or logged.
-- [ ] Confirm changed files are detected and reprocessed.
-- [ ] Verify extracted data is attributed to the correct host and survives map updates.
-- [ ] Verify file-processing failures do not stop scanning or agent propagation.
+- [ ] Run one table-driven file-processing test covering every supported
+  extension, multiple caches, and malformed, empty, duplicate, and oversized
+  inputs; verify failures do not stop scanning or propagation.
+- [ ] Verify unchanged files are skipped and changed files are reprocessed.
+- [ ] Verify extracted data is attributed to the source host and survives map
+  updates.
 
 ### Extend the server solver
 
@@ -190,14 +188,13 @@ Testing:
 
 Testing:
 
-- [ ] Unit-test each strategy with captured server-detail and clue fixtures.
-- [ ] Verify successful authentication returns `true` and permits agent deployment.
-- [ ] Verify failed authentication returns `false` with useful diagnostic state.
-- [ ] Confirm clues from files and Heartbleed are passed to the correct strategy.
-- [ ] Confirm retry limits and backoff prevent repeated attempts on every loop.
-- [ ] Confirm unknown models are recorded once and do not crash the agent.
-- [ ] Run an in-game traversal test across multiple model types.
-- [ ] Verify concurrent agents do not duplicate expensive solver attempts unnecessarily.
+- [ ] Run table-driven strategy tests with captured details and clues, covering
+  successful and failed authentication, Heartbleed/file clues, and unknown
+  models.
+- [ ] Verify retry/backoff and concurrent-agent coordination prevent duplicate
+  expensive attempts.
+- [ ] Run one in-game traversal test spanning multiple model types and confirm
+  successful authentication permits deployment.
 
 ## Matrix terminal background
 
@@ -267,7 +264,6 @@ Testing:
 - [x] Test `-o PCT` and `--opacity PCT`; verify both apply the same opacity. ✅ 2026-10-17
 - [x] Test `-R SEC` and `--rainbow SEC`; verify both apply the same rainbow duration. ✅ 2026-10-17
 - [x] Test `-S DEG` and `--spread DEG`; verify both apply the same color range. ✅ 2026-10-17
-- [ ] Test `-i DEG` and `--init-color DEG`; verify both give every newly created column the same first-drop hue.
 - [x] Test `--rainbow` with no duration and verify it uses 10 seconds; then test explicit durations of 1 and 100 seconds. ✅ 2026-10-17
 - [x] Verify invalid numeric input is rejected: empty values, decimals, `NaN`, `Infinity`, booleans, and values just outside each documented range. ✅ 2026-10-17
 - [x] Verify negative and greater-than-359 color offsets wrap correctly, including `--color -120`, `--color 360`, and `--color 480`. ✅ 2026-10-17
@@ -284,30 +280,48 @@ Testing:
 - [x] Change browser zoom or move between displays with different scaling; verify device-pixel-ratio resizing keeps text sharp and correctly sized. ✅ 2026-10-17
 - [x] Navigate away from the terminal; verify drawing pauses and its canvas detaches, then return and verify a single correctly sized canvas reattaches and rendering resumes. ✅ 2026-10-17
 - [x] Leave the browser tab hidden for at least one minute; verify animation work remains paused and resumes without a burst or duplicated renderer. ✅ 2026-10-17
-- [ ] Relaunch with `--no-pause`, visit several non-terminal menus, hide and restore the browser tab, and verify the canvas remains mounted and rendering advances continuously without creating another renderer.
-- [ ] Relaunch without `--no-pause`, hide and restore the browser tab, and verify the default pause behavior still works.
 - [x] Test normal `--stop`, manual PID kill, script error, stale-owner recovery, and terminal DOM replacement; verify each path leaves no unintended DOM markers or elements. ✅ 2026-10-17
 - [x] Run a 30-minute soak test while resizing, navigating, and live-reconfiguring; verify bounded memory usage, one owner, one canvas, and no repeated log noise. ✅ 2026-10-17
 - [x] Smoke-test against the current Bitburner release and record the terminal selector and wrapper hierarchy observed during the test. ✅ 2026-10-17
-- [ ] Display an `INFO:` terminal message; verify only drops born during the response window become blue and retain blue until they reset.
-- [ ] Display a `PASS:` terminal message; verify only drops born during the response window become green and retain green until they reset.
-- [ ] Display a `WARN:` terminal message; verify only drops born during the response window become yellow and retain yellow until they reset.
-- [ ] Display a `WARNING:` terminal message; verify it behaves identically to `WARN:`.
-- [ ] Display an `ERROR:` terminal message; verify only drops born during the response window become red and retain red until they reset.
-- [ ] Display a `FAIL:` terminal message; verify it behaves identically to `ERROR:`.
-- [ ] Display INFO, WARN, and ERROR messages in quick succession; verify the highest active severity wins and lower-severity output does not interrupt it.
-- [ ] Enable rainbow mode, trigger each status type, and verify status-colored drops remain fixed at their assigned hue until reset while ordinary drops continue cycling.
-- [ ] Navigate away from and back to the terminal after a status flash; verify the output observer reconnects once without replaying old messages.
-- [ ] Leave an old `ERROR:` or `FAIL:` entry in terminal history, then produce unrelated terminal output and trigger terminal DOM rerenders; verify the Matrix observer does not replay the historical error or pulse red again.
-- [ ] Relaunch or reattach with `--init-color 240`; verify the initial sweep is red and each column switches to the configured palette only after its first reset.
-- [ ] Combine `--init-color`, `--spread`, and `--rainbow`; verify initial drops stay fixed until reset and later drops follow spread and rainbow settings.
-- [ ] Trigger a status message while columns are being created; verify the status hue takes priority over `--init-color` for those columns.
+- [ ] Test both `-i` and `--init-color` in one run with spread and rainbow;
+  verify the initial sweep uses the requested hue, later drops use the normal
+  palette, and a status flash takes priority for newly created columns.
+- [ ] Compare one `--no-pause` run with the default while navigating away and
+  hiding/restoring the tab; verify continuous rendering versus clean pause and
+  resume without duplicate renderers.
+- [ ] Trigger `INFO`/`PASS`, `WARN`/`WARNING`, and `ERROR`/`FAIL` pairs; verify
+  each alias pair maps to the same expected color and only newly born drops are
+  affected until reset.
+- [ ] Trigger overlapping severities in rainbow mode; verify the highest active
+  severity wins, status drops remain fixed, and ordinary drops keep cycling.
+- [ ] Navigate away and rerender the terminal after a status flash; verify the
+  observer reconnects once and does not replay historical status messages.
 
 ## General script review
 
 For each script, review correctness, argument handling, error handling, RAM usage,
 logging, infinite-loop pacing, interactions with other scripts, and stale or
 duplicated behavior.
+
+### Findings from the 3.0.0 compatibility review
+
+These are general correctness/tooling findings, not Bitburner 3.0.0 migration
+requirements:
+
+- [ ] Await `ns.scp()` in `dynamic-hack-scheduler.js` before treating the copy
+  as successful and calling remote `exec`; the current Promise is truthy before
+  the transfer completes.
+- [ ] Fix the undefined `ns` reference in `contract-solvers.js` reported by the
+  compatibility-focused ESLint pass.
+- [ ] Define or replace the undefined `RED` and `RESET` references in
+  `shareRam.js` reported by the compatibility-focused ESLint pass.
+- [ ] Align the TypeScript, ESLint, and TypeScript-ESLint dependency versions so
+  the repository's full ESLint configuration loads successfully.
+- [ ] Add launch-failure reporting to `automate.js`; its `ns.exec()` calls do
+  not currently inspect PID 0 when `home` lacks RAM or a target script is
+  unavailable.
+- [ ] Check the initial `home`-to-Darknet launch result in `darknet-agent.js`;
+  later remote launches report PID 0, but the bootstrap launch does not.
 
 Per-script testing procedure:
 
@@ -373,13 +387,98 @@ Per-script testing procedure:
 
 ## Bitburner 3.0.0 compatibility review criteria
 
-- [ ] Compare every Netscript API call with the Bitburner 3.0.0 definitions.
-- [ ] Check changed method signatures, option objects, return values, and async behavior.
-- [ ] Check renamed, removed, deprecated, or newly singularity-gated APIs.
-- [ ] Verify script paths, imports, `scp`, and remote `exec` behavior.
-- [ ] Verify all worker argument positions and process-identity assumptions.
-- [ ] Check RAM-cost-sensitive APIs and ensure scripts have enough host RAM.
-- [ ] Run ESLint and syntax validation across all scripts.
+- [x] Compare every Netscript API call with the Bitburner 3.0.0 definitions. ✅ 2026-11-19
+- [x] Check changed method signatures, option objects, return values, and async behavior. ✅ 2026-11-19
+- [x] Check renamed, removed, deprecated, or newly singularity-gated APIs. ✅ 2026-11-19
+- [x] Verify script paths, imports, `scp`, and remote `exec` behavior. ✅ 2026-11-19
+- [x] Verify all worker argument positions and process-identity assumptions. ✅ 2026-11-19
+- [x] Check RAM-cost-sensitive APIs and ensure scripts have enough host RAM. ✅ 2026-11-19
+- [x] Run ESLint and syntax validation across all scripts. ✅ 2026-11-19
 - [ ] Perform in-game smoke tests for scripts that depend on live game state.
-- [ ] Record any required migration changes before implementing them.
+- [x] Record any required migration changes before implementing them. ✅ 2026-11-19
+
+## Bitburner 3.0.0 compatibility updates
+
+Keep the tasks in this section limited to changes required by Bitburner 3.0.0.
+General correctness and maintainability recommendations belong in the existing
+review sections above.
+
+Static review baseline (2026-11-19):
+
+- [x] Inventory all 51 JavaScript files under `src`, including library, utility,
+  and test scripts.
+- [x] Compare repository API usage with the official v3.0.0 release notes and
+  `v3.0.0` `NetscriptDefinitions.d.ts`.
+- [x] Run `node --check` on all 51 JavaScript files; all passed.
+- [x] Run a compatibility-focused ESLint pass with the built-in parser after
+  the project TypeScript-ESLint configuration failed to load. It found three
+  pre-existing undefined-name errors, recorded under General script review.
+- [ ] Restore the full project ESLint configuration. It is blocked while
+  loading the `@typescript-eslint` plugin because the installed TypeScript
+  7.0.2 is incompatible with the repository's older
+  ESLint/TypeScript-ESLint toolchain.
+
+Review evidence:
+
+- [x] All relative imports resolve to files in `src`; root-relative script
+  constants used by `run`, `exec`, `scp`, and `getScriptRam` match repository
+  paths.
+- [x] All scheduler worker launches use the shared positional contract
+  `target`, `stock`, `delay`, `batchId`. PID+host tracking is used after launch,
+  and the batch ID preserves process-signature uniqueness when equivalent jobs
+  share a host. The deterministic worker contract test passed all five cases.
+- [x] Remote production dispatchers calculate worker RAM and limit threads to
+  available host RAM before `exec`. Dispatch failures return PID 0 and are
+  either rolled back or reported. The game accounts for the v3.0.0 per-method
+  Hacknet RAM costs through each script's calculated total RAM.
+- Live smoke testing is currently blocked: the installed Bitburner application starts
+  only background Electron processes and exposes no game window to the
+  computer-control session. Open a usable Bitburner 3.0.0 window, then run the
+  compatibility verification tasks below.
+
+Required migrations:
+
+- [ ] Replace removed top-level formatting calls in `gang-manager.js` and
+  `test-scripts/worker-test.js`: use `ns.format.number()` instead of
+  `ns.formatNumber()` and `ns.format.ram()` instead of `ns.formatRam()`.
+- [ ] Replace the removed `ns.tail()` call in `lib/matrix-bg.js` with
+  `ns.ui.openTail()`; retain the existing PID-aware `ns.ui.openTail()` behavior
+  for reconfiguration of the persistent owner.
+- [ ] Update `darknet-agent.js` for the v3.0.0 Darknet contract. In v3.0.0 the
+  details method is `ns.dnet.getServerAuthDetails()`, not
+  `ns.dnet.getServerDetails()`; the latter is a later API revision.
+- [ ] Replace the hard-coded `darkweb` bootstrap in `darknet-agent.js` with the
+  v3.0.0 Darknet entry/discovery flow. The legacy `darkweb` server was replaced
+  by the Darknet mechanic in 3.0.0.
+- [ ] Consume `ns.dnet.heartbleed()` as a result object and read its `logs`
+  array; do not interpolate the entire result as if it were a log string.
+- [ ] Update root-access handling in `dynamic-hack-scheduler.js` and
+  `helpers.js` for v3.0.0: `ns.nuke()` and the port-opening APIs return `false`
+  on failure instead of throwing. Check every return value and do not report
+  root success until `ns.hasRootAccess()` confirms it.
+- [ ] Audit `Stock-trader.js` access checks for v3.0.0, where TIX API access is
+  independent of a WSE account. Remove any WSE prerequisite that incorrectly
+  disables a valid TIX/4S workflow, while preserving the separate short-sale
+  unlock check.
+- [ ] Replace or explicitly pin the checked-in `NetscriptDefinitions.d.ts` to
+  the official v3.0.0 definitions during this migration. The current file does
+  not hash-match v3.0.0 and exposes the later `getServerDetails()` name, which
+  masks the Darknet incompatibility.
+
+Compatibility verification:
+
+- [ ] Confirm `gang-manager.js` and `test-scripts/worker-test.js` render number
+  and RAM values without missing-function errors.
+- [ ] Confirm both first-launch and live-reconfiguration `matrix-bg.js` paths
+  open the correct tail window under v3.0.0.
+- [ ] Run `darknet-agent.js` from `home`, enter the Darknet, authenticate a
+  representative server, read Heartbleed logs, copy the agent, and start one
+  versioned agent per reachable host.
+- [ ] Exercise failed and successful port-opening/root attempts and verify the
+  scheduler never logs a false success.
+- [ ] Test `Stock-trader.js` with WSE-only, TIX-only, TIX+4S, and short-sale
+  access states.
+- [ ] Re-scan all scripts against the pinned v3.0.0 definitions and mark each
+  per-script compatibility task complete only after its API usage and relevant
+  live behavior pass.
 
