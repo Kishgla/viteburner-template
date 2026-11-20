@@ -19,10 +19,20 @@ export async function main(ns) {
   if (snapshot && !Number.isInteger(snapshot.schedulerPid)) errors.push('missing scheduler PID');
   if (snapshot && !Number.isInteger(snapshot.schedulerVersion)) errors.push('missing scheduler version');
   if (snapshot && !Array.isArray(snapshot.dispatchAttempts)) errors.push('missing dispatch attempts');
+  if (snapshot && typeof snapshot.dashboard?.eventOnly !== 'boolean') errors.push('missing dashboard mode');
+  if (snapshot && !Number.isInteger(snapshot.dashboard?.statusInterval)) errors.push('missing status interval');
+  if (snapshot && typeof snapshot.dashboard?.xpEnabled !== 'boolean') errors.push('missing XP enabled state');
+  if (snapshot && (!Number.isInteger(snapshot.dashboard?.xpWorkers) || snapshot.dashboard.xpWorkers < 0))
+    errors.push('invalid XP worker count');
+  if (snapshot && (!Number.isInteger(snapshot.dashboard?.xpThreads) || snapshot.dashboard.xpThreads < 0))
+    errors.push('invalid XP thread count');
   for (const status of snapshot?.targets ?? []) {
     if (typeof status.target !== 'string' || typeof status.state !== 'string') errors.push('invalid target status');
     if (!Number.isInteger(status.pipeline) || status.pipeline < 0)
       errors.push(`${status.target}: invalid pipeline depth`);
+    if (typeof status.prepKind !== 'string') errors.push(`${status.target}: invalid prep kind`);
+    if (status.nextLanding !== null && !Number.isFinite(status.nextLanding))
+      errors.push(`${status.target}: invalid next landing`);
   }
   for (const batch of snapshot?.batches ?? []) {
     if (!Array.isArray(batch.threadAllocation) && !batch.recovered) errors.push(`${batch.id}: missing allocations`);

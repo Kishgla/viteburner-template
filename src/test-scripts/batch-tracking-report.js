@@ -43,6 +43,27 @@ export async function main(ns) {
         batch.operations.length
       }`,
     );
+    for (const allocation of batch.threadAllocation ?? []) {
+      ns.tprint(
+        `    ${allocation.phase} threads=${allocation.threads} ${allocation.workers
+          .map((worker) => `${worker.host}x${worker.threads}`)
+          .join(', ')}`,
+      );
+    }
+  }
+  for (const prep of comparison.snapshot.preps ?? []) {
+    ns.tprint(
+      `  ${prep.id} target=${prep.target} kind=${prep.kind} landing=${new Date(
+        prep.expectedLanding,
+      ).toLocaleTimeString()} jobs=${prep.operations.length}`,
+    );
+    for (const allocation of prep.threadAllocation ?? []) {
+      ns.tprint(
+        `    ${allocation.phase} threads=${allocation.threads} ${allocation.workers
+          .map((worker) => `${worker.host}x${worker.threads}`)
+          .join(', ')}`,
+      );
+    }
   }
   ns.tprint(
     `${comparison.valid ? 'PASS' : 'FAIL'}: metadataErrors=${comparison.metadataErrors}, landingErrors=${

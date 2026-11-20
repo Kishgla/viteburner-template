@@ -5,9 +5,10 @@ const RESET = "\x1B[0m";
 /**
  * Breadth-first search to discover all servers starting from "home".
  * @param {NS} ns - The Netscript environment.
- * @return {string[]} List of all discovered server names. 
+ * @param {boolean} verbose - Whether to print each discovery to the script log.
+ * @return {string[]} List of all discovered server names.
  */
-export function getAllServerNames(ns) {
+export function getAllServerNames(ns, verbose = true) {
   let queue = ["home"];
   let visited = [];
 
@@ -16,7 +17,7 @@ export function getAllServerNames(ns) {
 
     if (!visited.includes(server)) {
       visited.push(server);
-      ns.print(`Discovered server: ${server}`);
+      if (verbose) ns.print(`Discovered server: ${server}`);
 
       try {
         const neighbors = ns.scan(server);
@@ -29,7 +30,7 @@ export function getAllServerNames(ns) {
     }
   }
 
-  ns.print(`Scan complete. Found ${visited.length} servers.`);
+  if (verbose) ns.print(`Scan complete. Found ${visited.length} servers.`);
   return visited;
 }
 
